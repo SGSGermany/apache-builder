@@ -1,0 +1,95 @@
+#!/bin/bash
+# apache-builder
+# A container to build Apache containers.
+#
+# Copyright (c) 2021  SGS Serious Gaming & Simulations GmbH
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see LICENSE file or <https://opensource.org/licenses/MIT>.
+#
+# SPDX-License-Identifier: MIT
+# License-Filename: LICENSE
+
+set -eu -o pipefail
+export LC_ALL=C
+
+CONFIG_DIR="/etc/apache-builder"
+BUILD_DIR="/var/local/apache-builder"
+
+print_usage() {
+    echo "Usage:"
+    echo "  $(basename "$0") [--quiet|-q|--verbose|-v]"
+}
+
+VERBOSE=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --quiet|-q)
+            VERBOSE=-1
+            ;;
+
+        --verbose|-v)
+            VERBOSE=1
+            ;;
+
+        --help)
+            print_usage
+            exit 0
+            ;;
+
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+# prepare fds according to verbosity
+# verbosity -1: hide stdout and stderr
+# verbosity 0: print stderr, hide stdout
+# verbosity 1: print stdout and stderr
+[ "$VERBOSE" -gt -1 ] || exec 2> /dev/null
+[ "$VERBOSE" -gt 0 ] || exec 1> /dev/null
+
+# load container config
+if [ -f "$CONFIG_DIR/container.env" ]; then
+    echo + "source $CONFIG_DIR/container.env"
+    source "$CONFIG_DIR/container.env"
+elif [ -f "$BUILD_DIR/container.env" ]; then
+    echo + "source $BUILD_DIR/container.env"
+    source "$BUILD_DIR/container.env"
+else
+    echo "Unable to read container environment: No such file or directory" >&2
+    exit 1
+fi
+
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
+
+# check whether image is in OCI archive
+if [ ! -d "$BUILD_DIR/archives/$IMAGE/${TAGS[0]}" ]; then
+    echo "Failed to find image '$IMAGE/${TAGS[0]}': No image with this tag found in OCI archive '$BUILD_DIR/archives/'" >&2
+    echo "Image rebuild required" >&2
+    exit 1
+fi
+
+# compare base image digests
+echo + "BASE_IMAGE_DIGEST=\"\$(jq -r '.[][\"Parent\"][\"Digest\"]' $BUILD_DIR/archives/$IMAGE/${TAGS[0]}/metadata.json)\""
+BASE_IMAGE_DIGEST="$(jq -r '.[]["Parent"]["Digest"]' "$BUILD_DIR/archives/$IMAGE/${TAGS[0]}/metadata.json" || true)"
+
+echo + "LATEST_BASE_IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' docker://$BASE_IMAGE)\""
+LATEST_BASE_IMAGE_DIGEST="$(skopeo inspect --format '{{.Digest}}' "docker://$BASE_IMAGE" || true)"
+
+if [ -z "$LATEST_BASE_IMAGE_DIGEST" ]; then
+    echo "Failed to inspect latest base image '$BASE_IMAGE': \`skopeo inspect\` failed, likely there was no image with this tag found" >&2
+    echo "Image rebuild required" >&2
+    exit 1
+fi
+
+if [ -z "$BASE_IMAGE_DIGEST" ] || [ "$BASE_IMAGE_DIGEST" != "$LATEST_BASE_IMAGE_DIGEST" ]; then
+    echo "Base image digest mismatch, the image's base image '$BASE_IMAGE' is out of date" >&2
+    echo "Current base image digest: $BASE_IMAGE_DIGEST" >&2
+    echo "Latest base image digest: $LATEST_BASE_IMAGE_DIGEST" >&2
+    echo "Image rebuild required" >&2
+    exit 1
+fi

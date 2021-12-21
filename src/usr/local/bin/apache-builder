@@ -1,0 +1,451 @@
+#!/bin/bash
+# apache-builder
+# A container to build Apache containers.
+#
+# Copyright (c) 2021  SGS Serious Gaming & Simulations GmbH
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see LICENSE file or <https://opensource.org/licenses/MIT>.
+#
+# SPDX-License-Identifier: MIT
+# License-Filename: LICENSE
+
+set -eu -o pipefail
+export LC_ALL=C
+shopt -s nullglob
+
+CONFIG_DIR="/etc/apache-builder"
+BUILD_DIR="/var/local/apache-builder"
+
+cmd() {
+    echo + "$@" >&2
+    "$@"
+    return $?
+}
+
+envsubst() {
+    local VARIABLES="$(for ARG in "$@"; do
+        awk 'match($0, /([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
+    done)"
+
+    env -i -C "/" "$@" \
+        sh -c 'envsubst "$1"' 'envsubst' "$VARIABLES"
+}
+
+create_site_conf() {
+    local SOURCE_PATH="$1"
+    local TARGET_PATH="${2:-$1}"
+
+    if [ -f "$MOUNT/etc/apache2/sites-available/$TARGET_PATH" ]; then
+        return 1
+    fi
+
+    local TARGET_DIR="$(dirname "$TARGET_PATH")"
+    if [ "$TARGET_DIR" != "." ]; then
+        echo + "mkdir -p …/etc/apache2/sites-available/$TARGET_DIR" >&2
+        ( cd "$MOUNT/etc/apache2/sites-available" ; mkdir -p "$TARGET_DIR" )
+    fi
+
+    echo + "envsubst < $SITES_TEMPLATES/$SOURCE_PATH > …/etc/apache2/sites-available/$TARGET_PATH" >&2
+    envsubst \
+        SITE="$SITE" SITE_MODE="$SITE_MODE" SITE_OWNER="$SITE_OWNER" \
+        SITE_UID="$SITE_UID" SITE_WEBMASTER="$SITE_WEBMASTER" \
+        SITE_ALIASES="$SITE_ALIASES" SITE_URL="$SITE_URL" \
+        < "$SITES_TEMPLATES/$SOURCE_PATH" \
+        > "$MOUNT/etc/apache2/sites-available/$TARGET_PATH"
+}
+
+get_host_path() {
+    (
+        set +u
+
+        local HOST_PATH=
+        local ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
+
+        local HOST_PATHS_VAR="HOST_${1^^}_PATHS[@]"
+        HOST_PATH="$(printf '%s\n' "${!HOST_PATHS_VAR}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+
+        if [ -z "$HOST_PATH" ]; then
+            local HOST_PATH_PATTERN_VAR="HOST_${1^^}_PATH_PATTERN"
+            HOST_PATH="$(envsubst SITE="$SITE" SITE_OWNER="$SITE_OWNER" <<< "${!HOST_PATH_PATTERN_VAR}")"
+        fi
+
+        [ -n "$HOST_PATH" ] || return 1
+        echo "$HOST_PATH"
+    )
+}
+
+get_host_uid() {
+    local ESCAPED_USER="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
+    local RESULT="$(printf '%s\n' "${HOST_UID_MAP[@]}" | sed -ne "s/^$ESCAPED_USER   *\(.*\)$/\1/p")"
+
+    [ -n "$RESULT" ] || return 1
+    echo "$RESULT"
+}
+
+get_host_gid() {
+    local ESCAPED_GROUP="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
+    local RESULT="$(printf '%s\n' "${HOST_GID_MAP[@]}" | sed -ne "s/^$ESCAPED_GROUP   *\(.*\)$/\1/p")"
+
+    [ -n "$RESULT" ] || return 1
+    echo "$RESULT"
+}
+
+if [ -f "$CONFIG_DIR/container.env" ]; then
+    echo + "source $CONFIG_DIR/container.env" >&2
+    source "$CONFIG_DIR/container.env"
+elif [ -f "$BUILD_DIR/container.env" ]; then
+    echo + "source $BUILD_DIR/container.env" >&2
+    source "$BUILD_DIR/container.env"
+else
+    echo "ERROR: Unable to read container environment: No such file or directory" >&2
+    exit 1
+fi
+
+if [ -f "$CONFIG_DIR/config.env" ]; then
+    echo + "source $CONFIG_DIR/config.env" >&2
+    source "$CONFIG_DIR/config.env"
+elif [ -f "$BUILD_DIR/config.env" ]; then
+    echo + "source $BUILD_DIR/config.env" >&2
+    source "$BUILD_DIR/config.env"
+else
+    echo "ERROR: Unable to read Apache build config: No such file or directory" >&2
+    exit 1
+fi
+
+if [ -d "$CONFIG_DIR/sites-templates" ]; then
+    echo + "SITES_TEMPLATES=\"$CONFIG_DIR/sites-templates\"" >&2
+    SITES_TEMPLATES="$CONFIG_DIR/sites-templates"
+else
+    echo + "SITES_TEMPLATES=\"$BUILD_DIR/sites-templates\"" >&2
+    SITES_TEMPLATES="$BUILD_DIR/sites-templates"
+fi
+
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
+
+# build container
+PODMAN_CREATE_PARAMS=()
+
+echo + "CONTAINER=\"\$(buildah from $BASE_IMAGE)\"" >&2
+CONTAINER="$(buildah from "$BASE_IMAGE")"
+
+echo + "MOUNT=\"\$(buildah mount $CONTAINER)\"" >&2
+MOUNT="$(buildah mount "$CONTAINER")"
+
+cmd buildah config \
+    --volume "/var/www-" \
+    --volume "/var/log/apache2-" \
+    --volume "/etc/apache2/ssl-" \
+    "$CONTAINER"
+
+# copy files
+echo + "rsync -v -rl --exclude .gitignore $BUILD_DIR/src/ …/" >&2
+rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/" >&2
+
+echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/mods/ …/etc/apache2/mods-available/" >&2
+rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/mods/" "$MOUNT/etc/apache2/mods-available/" >&2
+
+echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/conf/ …/etc/apache2/conf-available/" >&2
+rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/conf/" "$MOUNT/etc/apache2/conf-available/" >&2
+
+echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/sites/ …/etc/apache2/sites-available/" >&2
+rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/sites/" "$MOUNT/etc/apache2/sites-available/" >&2
+
+# modules and configs
+echo + "buildah run $CONTAINER -- sh -c \"a2querymod | xargs a2dismod\"" >&2
+buildah run "$CONTAINER" -- \
+    sh -c "a2querymod | xargs a2dismod"
+
+if [ "${#APACHE_MODULES[@]}" -gt 0 ]; then
+    cmd buildah run "$CONTAINER" -- \
+        a2enmod "${APACHE_MODULES[@]}"
+fi
+
+echo + "buildah run $CONTAINER -- sh -c \"a2queryconf | xargs a2disconf\"" >&2
+buildah run "$CONTAINER" -- \
+    sh -c "a2queryconf | xargs a2disconf"
+
+if [ "${#APACHE_CONFIGS[@]}" -gt 0 ]; then
+    cmd buildah run "$CONTAINER" -- \
+        a2enconf "${APACHE_CONFIGS[@]}"
+fi
+
+# php sockets
+cmd buildah run "$CONTAINER" -- \
+    adduser -u 65537 -s "/sbin/nologin" -D -h "/" -H php-sock
+
+cmd buildah run "$CONTAINER" -- \
+    addgroup apache2 php-sock
+
+# acme challenges
+cmd buildah run "$CONTAINER" -- \
+    adduser -u 65538 -s "/sbin/nologin" -D -h "/" -H acme
+
+cmd buildah run "$CONTAINER" -- \
+    addgroup apache2 acme
+
+PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_ACME_CHALLENGES_PATH,dst=/var/www/acme-challenges,ro=true" )
+cmd buildah config --volume "/var/www/acme-challenges" "$CONTAINER"
+
+# ssl DH parameters
+if [ -f "$CONFIG_DIR/ssl/dhparams.pem" ]; then
+    echo + "cp $CONFIG_DIR/ssl/dhparams.pem …/etc/apache2/ssl/dhparams.pem" >&2
+    cp "$CONFIG_DIR/ssl/dhparams.pem" "$MOUNT/etc/apache2/ssl/dhparams.pem"
+else
+    echo + "openssl dhparam -out …/etc/apache2/ssl/dhparams.pem 2048" >&2
+    openssl dhparam -out "$MOUNT/etc/apache2/ssl/dhparams.pem" 2048
+fi
+
+# read sites data
+SITES_DATA=()
+SITES_NEXT_UID=65539
+while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PHP; do
+    ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
+
+    [ "$SITE_OWNER" == "apache2" ] || SITE_UID="$((SITES_NEXT_UID++))"
+    SITE_WEBMASTER="webmaster@$(echo "$SITE" | rev | cut -d '.' -f 1-2 | rev)"
+
+    SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+
+    SITE_URL="$(printf '%s\n' "${SITES_URLS[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+    [ -n "$SITE_URL" ] || [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_URL="https://$SITE" || SITE_URL="http://$SITE"
+
+    SITES_DATA+=( "$(printf '%s=%q\n' \
+        SITE "$SITE" \
+        SITE_MODE "$SITE_MODE" \
+        SITE_OWNER "$SITE_OWNER" \
+        SITE_ENABLE_SSL "$SITE_ENABLE_SSL" \
+        SITE_ENABLE_PHP "$SITE_ENABLE_PHP" \
+        SITE_UID "$SITE_UID" \
+        SITE_WEBMASTER "$SITE_WEBMASTER" \
+        SITE_ALIASES "$SITE_ALIASES" \
+        SITE_URL "$SITE_URL" \
+    )" )
+done < <(printf '%s\n' "${SITES[@]}" | sed -e 's/   */\t/g')
+
+# default site
+PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_DEFAULT_HTDOCS_PATH,dst=/var/www/default,ro=true" )
+PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_DEFAULT_LOGS_PATH,dst=/var/log/apache2/default" )
+
+cmd buildah config \
+    --volume "/var/www/default" \
+    --volume "/var/log/apache2/default" \
+    "$CONTAINER"
+
+# setup sites
+for SITE_DATA in "${SITES_DATA[@]}"; do
+    echo "$SITE_DATA" | xargs printf '+ %s\n' >&2
+    eval "$SITE_DATA"
+
+    if ! buildah run "$CONTAINER" -- id -u "$SITE_OWNER" > /dev/null 2>&1; then
+        cmd buildah run "$CONTAINER" -- \
+            adduser -u "$SITE_UID" -s /sbin/nologin -D -h "/usr/local/apache2" -H "$SITE_OWNER"
+
+        PODMAN_CREATE_PARAMS+=( --uidmap "$SITE_UID:$(get_host_uid "$SITE_OWNER"):1" )
+        PODMAN_CREATE_PARAMS+=( --gidmap "$SITE_UID:$(get_host_gid "$SITE_OWNER"):1" )
+    fi
+
+    # virtual host config
+    SKIP_CREATE_CONFIG="no"
+    if [ "$SITE_ENABLE_SSL" != "yes" ]; then
+        echo + "create_site_conf virtual-host.conf $SITE.conf" >&2
+        create_site_conf "virtual-host.conf" "$SITE.conf" \
+            || { SKIP_CREATE_CONFIG="yes"; true; }
+    else
+        echo + "create_site_conf virtual-host-ssl.conf $SITE.conf" >&2
+        create_site_conf "virtual-host-ssl.conf" "$SITE.conf" \
+            || { SKIP_CREATE_CONFIG="yes"; true; }
+
+        # ssl cert/key directory
+        if [ ! -d "$MOUNT/etc/apache2/ssl/$SITE" ]; then
+            echo + "mkdir …/etc/apache2/ssl/$SITE" >&2
+            mkdir "$MOUNT/etc/apache2/ssl/$SITE"
+        fi
+
+        PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "ssl"),dst=/etc/apache2/ssl/$SITE,ro=true" )
+        cmd buildah config --volume "/etc/apache2/ssl/$SITE" "$CONTAINER"
+    fi
+
+    case "$SITE_MODE" in
+        "htdocs")
+            # htdocs site config
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                echo + "create_site_conf conf.d/htdocs.conf $SITE.conf.d/htdocs.conf" >&2
+                create_site_conf "conf.d/htdocs.conf" "$SITE.conf.d/htdocs.conf" \
+                    || { SKIP_CREATE_CONFIG="yes"; true; }
+            fi
+
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/htdocs.conf.d/"*".conf"; do
+                    SITE_ADDITIONAL_CONF="htdocs.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
+
+                    echo + "create_site_conf conf.d/$SITE_ADDITIONAL_CONF $SITE.conf.d/$SITE_ADDITIONAL_CONF" >&2
+                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                done
+            fi
+
+            # htdocs php-fpm
+            if [ "$SITE_ENABLE_PHP" == "yes" ]; then
+                if [ ! -d "$MOUNT/run/php-fpm/$SITE" ]; then
+                    echo + "mkdir …/run/php-fpm/$SITE" >&2
+                    mkdir "$MOUNT/run/php-fpm/$SITE"
+                fi
+
+                PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "php_fpm"),dst=/run/php-fpm/$SITE,ro=true" )
+                cmd buildah config --volume "/run/php-fpm/$SITE" "$CONTAINER"
+
+                echo + "create_site_conf conf.d/php-fpm.conf $SITE.conf.d/php-fpm.conf" >&2
+                create_site_conf "conf.d/php-fpm.conf" "$SITE.conf.d/php-fpm.conf" || true
+            fi
+
+            # htdocs document root
+            if [ ! -d "$MOUNT/var/www/$SITE" ]; then
+                echo + "mkdir …/var/www/$SITE" >&2
+                mkdir "$MOUNT/var/www/$SITE"
+            fi
+
+            PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "htdocs"),dst=/var/www/$SITE,ro=true" )
+            cmd buildah config --volume "/var/www/$SITE" "$CONTAINER"
+            ;;
+
+        "proxy")
+            # proxy site config
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                echo + "create_site_conf conf.d/proxy.conf $SITE.conf.d/proxy.conf" >&2
+                create_site_conf "conf.d/proxy.conf" "$SITE.conf.d/proxy.conf" \
+                    || { SKIP_CREATE_CONFIG="yes"; true; }
+            fi
+
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/proxy.conf.d/"*".conf"; do
+                    SITE_ADDITIONAL_CONF="proxy.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
+
+                    echo + "create_site_conf conf.d/$SITE_ADDITIONAL_CONF $SITE.conf.d/$SITE_ADDITIONAL_CONF" >&2
+                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                done
+            fi
+            ;;
+
+        "redirect")
+            # redirect site config
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                echo + "create_site_conf conf.d/redirect.conf $SITE.conf.d/redirect.conf" >&2
+                create_site_conf "conf.d/redirect.conf" "$SITE.conf.d/redirect.conf" || true
+            fi
+            ;;
+    esac
+
+    # logs
+    if [ ! -d "$MOUNT/var/log/apache2/$SITE" ]; then
+        echo + "mkdir …/var/log/apache2/$SITE" >&2
+        mkdir "$MOUNT/var/log/apache2/$SITE"
+    fi
+
+    PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "logs"),dst=/var/log/apache2/$SITE" )
+    cmd buildah config --volume "/var/log/apache2/$SITE" "$CONTAINER"
+
+    # enable site
+    if [ "$SITE" != "default" ]; then
+        cmd buildah run "$CONTAINER" -- \
+            a2ensite "$SITE"
+    fi
+done
+
+# image annotations
+cmd buildah config \
+    --annotation org.opencontainers.image.title- \
+    --annotation org.opencontainers.image.description- \
+    --annotation org.opencontainers.image.url- \
+    --annotation org.opencontainers.image.authors- \
+    --annotation org.opencontainers.image.vendor- \
+    --annotation org.opencontainers.image.licenses- \
+    "$CONTAINER"
+
+for ANNOTATION in "${ANNOTATIONS[@]}"; do
+    cmd buildah config --annotation "$ANNOTATION" "$CONTAINER"
+done
+
+cmd buildah config \
+    --annotation org.opencontainers.image.base.name="$BASE_IMAGE" \
+    --annotation org.opencontainers.image.base.digest="$(podman image inspect --format '{{.Digest}}' "$BASE_IMAGE")" \
+    "$CONTAINER"
+
+# commit image
+cmd buildah commit "$CONTAINER" "$IMAGE:${TAGS[0]}" > /dev/null
+cmd buildah rm "$CONTAINER" > /dev/null
+
+for TAG in "${TAGS[@]:1}"; do
+    cmd buildah tag "$IMAGE:${TAGS[0]}" "$IMAGE:$TAG"
+done
+
+# create OCI archive
+echo + "IMAGE_ARCHIVE=\"\$(mktemp -u /tmp/apache-builder_XXXXXXXXXX)\"" >&2
+IMAGE_ARCHIVE="$(mktemp -u "/tmp/apache-builder_XXXXXXXXXX")"
+
+cmd podman push "$IMAGE:${TAGS[0]}" "oci-archive:$IMAGE_ARCHIVE"
+
+# publish OCI archive
+echo + "IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' oci-archive:$IMAGE_ARCHIVE | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
+IMAGE_DIGEST="$(skopeo inspect --format '{{.Digest}}' "oci-archive:$IMAGE_ARCHIVE" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
+
+if [ ! -d "$BUILD_DIR/archives/$IMAGE" ]; then
+    cmd mkdir "$BUILD_DIR/archives/$IMAGE"
+fi
+
+cmd mkdir "$BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST"
+cmd mv -Z "$IMAGE_ARCHIVE" "$BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/image"
+
+for TAG in "${TAGS[@]}"; do
+    cmd ln -fn -s "$IMAGE_DIGEST" "$BUILD_DIR/archives/$IMAGE/$TAG"
+done
+
+# print result metadata
+echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $IMAGE:${TAGS[0]})\"" >&2
+IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE:${TAGS[0]}")"
+
+PODMAN_CREATE=(
+    podman create -t --name "$CONTAINER_NAME" \
+        --subuidname "$HOST_USERNS" --uidmap "65536:$(get_host_uid apache2):1" \
+            --uidmap "65537:$(get_host_uid php-sock):1" --uidmap "65538:$(get_host_uid acme):1" \
+        --subgidname "$HOST_USERNS" --gidmap "65536:$(get_host_gid apache2):1" \
+            --gidmap "65537:$(get_host_gid php-sock):1" --gidmap "65538:$(get_host_gid acme):1" \
+        "${PODMAN_CREATE_PARAMS[@]}" \
+        --net "$CONTAINER_NETWORK" -p "80:80/tcp" -p "443:443/tcp" \
+        "$IMAGE_ID"
+)
+
+JQ_TEMPLATE="$(cat <<'EOF'
+[
+    {
+        Id: $ID,
+        Name: $NAME,
+        Tags: $TAGS,
+        Digest: $DIGEST,
+        Parent: {
+            Id: .[]["Parent"],
+            Name: .[]["Annotations"]["org.opencontainers.image.base.name"],
+            Digest: .[]["Annotations"]["org.opencontainers.image.base.digest"]
+        },
+        RepoTags: .[]["RepoTags"],
+        RepoDigests: .[]["RepoDigests"],
+        Created: .[]["Created"],
+        Architecture: .[]["Architecture"],
+        Os: .[]["Os"],
+        Size: .[]["Size"],
+        VirtualSize: .[]["VirtualSize"],
+        CreateCommand: $CREATE_COMMAND
+    }
+]
+EOF
+)"
+
+echo + "podman image inspect $IMAGE:${TAGS[0]} | jq … | tee -a $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
+podman inspect "$IMAGE:${TAGS[0]}" \
+    | jq \
+        --arg ID "$IMAGE_ID" \
+        --arg NAME "$IMAGE" \
+        --argjson TAGS "$(printf '%s\n' ${TAGS[@]} | jq -R . | jq -s .)" \
+        --arg DIGEST "sha256:$IMAGE_DIGEST" \
+        --argjson CREATE_COMMAND "$(for ARG in "${PODMAN_CREATE[@]}"; do printf '%s' "$ARG" | jq -R -s .; done | jq -s .)" \
+        "$JQ_TEMPLATE" \
+    | tee "$BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json"
