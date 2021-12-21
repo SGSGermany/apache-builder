@@ -1,9 +1,9 @@
-name: Build & publish container
+name: Periodically rebuild & publish containers (auto update)
 
 on:
-  push:
-    branches: [ main ]
-    tags: [ 'v*.*.*' ]
+  schedule:
+    # run four times a day on 05:37 UTC, 11:37 UTC, 17:37 UTC and 23:37 UTC
+    - cron: '37 5,11,17,23 * * *'
 
 concurrency: build
 
@@ -12,16 +12,57 @@ env:
   CI_TOOLS_SETUP: https://raw.githubusercontent.com/SGSGermany/ci-tools/main/setup.sh
 
 jobs:
+  generate-jobs:
+    name: Generate jobs
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      BUILD_MATRIX: ${{ steps.generate-jobs.outputs.BUILD_MATRIX }}
+
+    env:
+      RUN_ON_BRANCHES: 'main'
+      RUN_ON_TAGS_LATEST: 'v*.*.*'
+
+    steps:
+      - name: Setup CI tools
+        run: |
+          . <(curl -fsS -L "$CI_TOOLS_SETUP" | bash -s ~/ci-tools)
+          echo "CI_TOOLS_PATH=$CI_TOOLS_PATH" | tee -a "$GITHUB_ENV"
+
+      - name: Generate jobs
+        id: generate-jobs
+        run: |
+          BUILD_REF="$("$CI_TOOLS_PATH/containers/generate-scheduled-jobs.sh")"
+          
+          echo ::group::Jobs list
+          echo "$BUILD_REF"
+          echo ::endgroup::
+          
+          echo "::set-output name=BUILD_MATRIX::$(echo "$BUILD_REF" | jq -R . | jq -c -s '{"BUILD_REF": .}')"
+
   build:
+    name: Build & publish container
+
+    needs: generate-jobs
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
+    strategy:
+      matrix: ${{ fromJSON(needs.generate-jobs.outputs.BUILD_MATRIX) }}
+      fail-fast: false
+      max-parallel: 1
+
     env:
       REGISTRY: ghcr.io
       OWNER: sgsgermany
       IMAGE: apache-builder
+      BUILD_REF: ${{ matrix.BUILD_REF }}
 
     steps:
       - name: Setup CI tools
@@ -31,6 +72,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v2
+        with:
+          ref: ${{ env.BUILD_REF }}
 
       - name: Log into container registry ${{ env.REGISTRY }}
         uses: redhat-actions/podman-login@v1
@@ -41,12 +84,12 @@ jobs:
 
       - name: Generate container image tags
         run: |
-          TAGS="$("$CI_TOOLS_PATH/containers/generate-image-tags.sh" "${GITHUB_REF:-$GITHUB_SHA}")"
+          TAGS="$("$CI_TOOLS_PATH/containers/generate-image-tags.sh" "$BUILD_REF")"
           echo "TAGS=${TAGS:-latest}" | tee -a "$GITHUB_ENV"
 
       - name: Check for updates
         run: |
-          BUILD_ACTION="$("$CI_TOOLS_PATH/containers/check-for-updates.sh" "sha-$GITHUB_SHA")"
+          BUILD_ACTION="$("$CI_TOOLS_PATH/containers/check-for-updates.sh" "sha-$(git rev-parse HEAD)")"
           echo "BUILD_ACTION=$BUILD_ACTION" | tee -a "$GITHUB_ENV"
 
       - name: Build container image
@@ -57,11 +100,11 @@ jobs:
       - name: Add container image tags
         if: ${{ env.BUILD_ACTION == 'tag' }}
         run: |
-          "$CI_TOOLS_PATH/containers/add-image-tags.sh" "sha-$GITHUB_SHA"
+          "$CI_TOOLS_PATH/containers/add-image-tags.sh" "sha-$(git rev-parse HEAD)"
 
       - name: Container image metadata
         run: |
-          podman image inspect "$IMAGE:sha-$GITHUB_SHA"
+          podman image inspect "$IMAGE:sha-$(git rev-parse HEAD)"
 
       - name: Push container image
         if: ${{ env.BUILD_ACTION != '' }}
