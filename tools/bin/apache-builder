@@ -1,0 +1,113 @@
+#!/bin/bash
+# apache-builder
+# A container to build Apache containers.
+#
+# Copyright (c) 2021  SGS Serious Gaming & Simulations GmbH
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see LICENSE file or <https://opensource.org/licenses/MIT>.
+#
+# SPDX-License-Identifier: MIT
+# License-Filename: LICENSE
+
+set -eu -o pipefail
+export LC_ALL=C
+shopt -s nullglob
+
+APP_NAME="$(basename "${BASH_SOURCE[0]}")"
+LIB_DIR="/usr/local/lib/apache-builder"
+
+print_usage() {
+    echo "Usage:"
+    echo "  $APP_NAME COMMAND CONFIG_FILE"
+    echo
+    echo "Commands:"
+    echo "  build          Builds the image."
+    echo "  import         Imports the built image into the Podman storage."
+    echo "  exists         Checks whether the image is in the Podman storage."
+    echo "  check-updates  Checks whether an image update is available."
+    echo "  update         Runs 'build', 'import', and 'create-unit'."
+    echo "  auto-update    Checks for updates and runs 'clean' and 'update', if necessary."
+    echo "  clean          Deletes unused images."
+    echo "  create-unit    Creates a Systemd service unit for the container."
+    echo "  unit-start     Starts the Systemd service."
+    echo "  unit-stop      Stops the Systemd service."
+    echo "  unit-kill      Sends SIGKILL signal to the Systemd service."
+    echo "  unit-restart   Restarts the Systemd service."
+    echo "  unit-status    Prints status info about the Systemd service."
+    echo "  unit-enable    Enables the Systemd service."
+    echo "  unit-disable   Disables the Systemd service."
+}
+
+# read parameters
+COMMAND=""
+CONFIG_FILE=""
+
+while [ $# -gt 0 ]; do
+    if [ -z "$COMMAND" ]; then
+        COMMAND="$1"
+    elif [ -z "$CONFIG_FILE" ]; then
+        CONFIG_FILE="$1"
+    else
+        echo "Unknown option: $1" >&2
+        exit 1
+    fi
+    shift
+done
+
+if [ -z "$COMMAND" ] || [ -z "$CONFIG_FILE" ]; then
+    print_usage >&2
+    exit 1
+fi
+
+# source helper functions
+source "$LIB_DIR/helper.sh.inc"
+
+# source config
+if [ ! -e "$CONFIG_FILE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': No such file or directory" >&2
+    exit 1
+elif [ ! -f "$CONFIG_FILE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Not a file" >&2
+    exit 1
+elif [ ! -r "$CONFIG_FILE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Permission denied" >&2
+    exit 1
+fi
+
+source "$CONFIG_FILE"
+
+if [ -z "$IMAGE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'IMAGE'" >&2
+    exit 1
+elif [ -z "$UNIT_TEMPLATE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'UNIT_TEMPLATE'" >&2
+    exit 1
+elif [ -z "$BUILDER_IMAGE" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'BUILDER_IMAGE'" >&2
+    exit 1
+elif [ -z "$CONFIG_PATH" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'CONFIG_PATH'" >&2
+    exit 1
+elif [ -z "$ARCHIVES_PATH" ]; then
+    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'ARCHIVES_PATH'" >&2
+    exit 1
+fi
+
+# set default variables
+[[ "$IMAGE" == *:* ]] || IMAGE="$IMAGE:latest"
+[ -n "$CONTAINER" ] || CONTAINER="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+[ -n "$UNIT" ] || UNIT="container-$CONTAINER.service"
+[ -n "$BUILDER_USER" ] || BUILDER_USER="root"
+[ -n "$BUILDER_CONTAINER" ] || BUILDER_CONTAINER="$(basename "$BUILDER_IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+
+# call command
+if [ ! -f "$LIB_DIR/$COMMAND.sh" ] || [ ! -r "$LIB_DIR/$COMMAND.sh" ]; then
+    echo "Invalid command: $COMMAND" >&2
+    exit 1
+fi
+
+source "$LIB_DIR/$COMMAND.sh"
+
+command_info
+command_exec
