@@ -9,16 +9,38 @@
 # SPDX-License-Identifier: MIT
 # License-Filename: LICENSE
 
-__call() {
-    local COMMAND="$1"
+quote() {
+    local QUOTED=""
+    for ARG in "$@"; do
+        [ "$(printf '%q' "$ARG")" == "$ARG" ] \
+            && QUOTED+=" $ARG" \
+            || QUOTED+=" ${ARG@Q}"
+    done
 
-    if [ ! -f "$LIB_DIR/$COMMAND.sh" ] || [ ! -r "$LIB_DIR/$COMMAND.sh" ]; then
-        echo "Invalid command: $COMMAND" >&2
+    echo "${QUOTED:1}"
+}
+
+cmd() {
+    echo + "$(quote "$@")" >&2
+
+    "$@"
+    return $?
+}
+
+__call() {
+    local ACTION="$1"
+    shift
+
+    if [ ! -e "$LIB_DIR/$ACTION.sh" ]; then
+        echo "Invalid action '$ACTION': Action not found" >&2
+        return 1
+    elif [ ! -f "$LIB_DIR/$ACTION.sh" ] || [ ! -r "$LIB_DIR/$ACTION.sh" ]; then
+        echo "Invalid action '$ACTION': Action is invalid" >&2
         return 1
     fi
 
-    source "$LIB_DIR/$COMMAND.sh"
-    command_exec
+    source "$LIB_DIR/$ACTION.sh"
+    action_exec "$@"
 }
 
 __systemctl() {
@@ -161,18 +183,34 @@ check_builder() {
 }
 
 run_builder() {
-    local EXEC=(
-        podman run --name "$BUILDER_CONTAINER" --pull "always" --replace \
-            --uidmap 0:1:65536 --uidmap 65536:0:1 \
-            --gidmap 0:1:65536 --gidmap 65536:0:1 \
-            --mount type="bind",src="$CONFIG_PATH",dst="/etc/apache-builder",ro="true" \
-            --mount type="bind",src="$ARCHIVES_PATH",dst="/var/local/apache-builder/archives" \
-            "$BUILDER_IMAGE" "$@"
-    )
+    # prepare `podman run` options
+    local OPTIONS=()
 
-    if [ "$BUILDER_USER" != "root" ]; then
-        sudo --non-interactive --login --user "$BUILDER_USER" -- "${EXEC[@]}"
+    OPTIONS+=( --interactive )
+
+    while [ $# -gt 0 ] && [ "${1:1:1}" == "-" ]; do
+        OPTIONS+=( "$1" )
+        shift
+    done
+
+    OPTIONS+=( --name "$BUILDER_CONTAINER" )
+    OPTIONS+=( --pull "always" --rm )
+    OPTIONS+=( --log-driver "none" )
+
+    # prepare `podman run` params
+    local PARAMS=()
+
+    PARAMS+=( --uidmap 0:1:65536 --uidmap 65536:0:1 )
+    PARAMS+=( --gidmap 0:1:65536 --gidmap 65536:0:1 )
+    PARAMS+=( --mount type="bind",src="$CONFIG_PATH",dst="/etc/apache-builder",ro="true" )
+    PARAMS+=( --mount type="bind",src="$ARCHIVES_PATH",dst="/var/local/apache-builder/archives" )
+
+    # execute `podman run`
+    local EXEC=( podman run "${OPTIONS[@]}" "${PARAMS[@]}" "$BUILDER_IMAGE" )
+
+    if [ "$BUILDER_USER" != "$(id -un)" ]; then
+        cmd sudo --login --user "$BUILDER_USER" -- "${EXEC[@]}" "$@"
     else
-        "${EXEC[@]}"
+        cmd "${EXEC[@]}" "$@"
     fi
 }

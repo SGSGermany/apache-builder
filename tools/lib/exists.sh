@@ -9,12 +9,12 @@
 # SPDX-License-Identifier: MIT
 # License-Filename: LICENSE
 
-command_info() {
-    echo + "IMAGE=\"$IMAGE\"" >&2
-    echo + "ARCHIVES_PATH=\"$ARCHIVES_PATH\"" >&2
+action_info() {
+    echo + "IMAGE=${IMAGE@Q}" >&2
+    echo + "ARCHIVES_PATH=${ARCHIVES_PATH@Q}" >&2
 }
 
-command_exec() {
+action_exec() {
     local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
     local TAG="$(basename "$IMAGE" | cut -s -d ':' -f 2 | cut -d '@' -f 1)"
 
@@ -22,12 +22,11 @@ command_exec() {
     check_oci_archive
     check_oci_image "$IMAGE"
 
-    echo + "METADATA=\"$ARCHIVES_PATH/$NAME/$TAG/metadata.json\"" >&2
     local METADATA="$ARCHIVES_PATH/$NAME/$TAG/metadata.json"
+    echo + "METADATA=${METADATA@Q}" >&2
 
-    echo + "IMAGE_ID=\"\$(jq -r '.[][\"Id\"]' $METADATA)\"" >&2
+    echo + "IMAGE_ID=\"\$(jq -r '.[][\"Id\"]' $(quote "$METADATA"))\"" >&2
     IMAGE_ID="$(jq -r '.[]["Id"]' "$METADATA")"
 
-    echo + "podman image exists $IMAGE_ID" >&2
-    podman image exists "$IMAGE_ID"
+    cmd podman image exists "$IMAGE_ID"
 }

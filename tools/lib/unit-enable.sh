@@ -9,15 +9,15 @@
 # SPDX-License-Identifier: MIT
 # License-Filename: LICENSE
 
-command_info() {
-    echo + "IMAGE=\"$IMAGE\"" >&2
-    echo + "UNIT=\"$UNIT\"" >&2
+action_info() {
+    echo + "IMAGE=${IMAGE@Q}" >&2
+    echo + "UNIT=${UNIT@Q}" >&2
 }
 
-command_exec() {
+action_exec() {
     check_unit "$UNIT"
     check_image "$IMAGE"
 
-    echo + "systemctl enable $UNIT" >&2
+    echo + "systemctl enable $(quote "$UNIT")" >&2
     __systemctl enable "$UNIT"
 }

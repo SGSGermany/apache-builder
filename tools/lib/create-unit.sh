@@ -30,14 +30,14 @@ systemd_escape() {
     echo "${RESULT:1}"
 }
 
-command_info() {
-    echo + "IMAGE=\"$IMAGE\"" >&2
-    echo + "UNIT=\"$UNIT\"" >&2
-    echo + "UNIT_TEMPLATE=\"$UNIT_TEMPLATE\"" >&2
-    echo + "ARCHIVES_PATH=\"$ARCHIVES_PATH\"" >&2
+action_info() {
+    echo + "IMAGE=${IMAGE@Q}" >&2
+    echo + "UNIT=${UNIT@Q}" >&2
+    echo + "UNIT_TEMPLATE=${UNIT_TEMPLATE@Q}" >&2
+    echo + "ARCHIVES_PATH=${ARCHIVES_PATH@Q}" >&2
 }
 
-command_exec() {
+action_exec() {
     local UNIT_PATH="/etc/systemd/system/$UNIT"
     local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
 
@@ -68,21 +68,21 @@ command_exec() {
     # check image
     check_image "$IMAGE"
 
-    echo + "IMAGE_ID=\"\$(podman inspect --format '{{.Id}}' $IMAGE)\""
+    echo + "IMAGE_ID=\"\$(podman inspect --format '{{.Id}}' $(quote "$IMAGE"))\"" >&2
     local IMAGE_ID="$(podman inspect --format '{{.Id}}' "$IMAGE")"
 
-    echo + "DIGEST=\"\$(podman inspect --format '{{.Digest}}' $IMAGE | sed -ne 's/^sha256:\(.*\)$/\1/p')\""
+    echo + "DIGEST=\"\$(podman inspect --format '{{.Digest}}' $(quote "$IMAGE") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
     local DIGEST="$(podman inspect --format '{{.Digest}}' "$IMAGE" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
 
     # check OCI archive
     check_oci_archive
     check_oci_image "$IMAGE@$DIGEST"
 
-    echo + "METADATA=\"$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json\"" >&2
     local METADATA="$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json"
+    echo + "METADATA=${METADATA@Q}" >&2
 
     # read create command
-    echo + "CREATE_COMMAND=( \$(jq -r '.[][\"CreateCommand\"]' $METADATA) )" >&2
+    echo + "CREATE_COMMAND=( \$(jq -r '.[][\"CreateCommand\"]' $(quote "$METADATA")) )" >&2
 
     local CREATE_COMMAND=()
     for (( INDEX=0, MAX="$(jq '.[]["CreateCommand"] | length' "$METADATA")" ; INDEX < MAX ; INDEX++ )); do
@@ -95,8 +95,8 @@ command_exec() {
     fi
 
     # write systemd unit
-    echo + "SYSTEMD_EXEC=\"\$(systemd_escape \"-d\" \"\${CREATE_COMMAND[@]:2}\")\"" >&2
-    SYSTEMD_EXEC="$(systemd_escape "-d" "${CREATE_COMMAND[@]:2}")"
+    echo + "SYSTEMD_EXEC=\"\$(systemd_escape -d \"\${CREATE_COMMAND[@]:2}\")\"" >&2
+    SYSTEMD_EXEC="$(systemd_escape -d "${CREATE_COMMAND[@]:2}")"
 
     if [ ! -e "$UNIT_TEMPLATE" ]; then
         echo "Invalid Systemd unit template '$UNIT_TEMPLATE': No such file or directory" >&2
@@ -109,7 +109,7 @@ command_exec() {
         exit 1
     fi
 
-    echo + "envsubst '…' < ./systemd-templates/container-unit.service > $UNIT_PATH" >&2
+    echo + "envsubst '…' < $(quote "./systemd-templates/container-unit.service") > $(quote "$UNIT_PATH")" >&2
     envsubst \
         IMAGE="$IMAGE" \
         CONTAINER="$CONTAINER" \

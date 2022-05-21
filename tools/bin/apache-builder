@@ -16,12 +16,17 @@ shopt -s nullglob
 
 APP_NAME="$(basename "${BASH_SOURCE[0]}")"
 LIB_DIR="/usr/local/lib/apache-builder"
+CONFIG_DIR="/etc/apache-builder"
 
 print_usage() {
     echo "Usage:"
-    echo "  $APP_NAME COMMAND CONFIG_FILE"
+    echo "  $APP_NAME [--config CONFIG] ACTION"
+}
+
+print_help() {
+    print_usage
     echo
-    echo "Commands:"
+    echo "Actions:"
     echo "  build          Builds the image."
     echo "  import         Imports the built image into the Podman storage."
     echo "  exists         Checks whether the image is in the Podman storage."
@@ -37,25 +42,45 @@ print_usage() {
     echo "  unit-status    Prints status info about the Systemd service."
     echo "  unit-enable    Enables the Systemd service."
     echo "  unit-disable   Disables the Systemd service."
+    echo "  help           Prints this usage info and exits."
 }
 
 # read parameters
-COMMAND=""
-CONFIG_FILE=""
+CONFIG_FILE="config.env"
+ACTION=""
 
 while [ $# -gt 0 ]; do
-    if [ -z "$COMMAND" ]; then
-        COMMAND="$1"
-    elif [ -z "$CONFIG_FILE" ]; then
-        CONFIG_FILE="$1"
-    else
+    if [ "$1" == "--help" ]; then
+        print_help
+        exit
+    elif [ "$1" == "--config" ] || [ "$1" == "-c" ]; then
+        if [ -z "${2:-}" ]; then
+            echo "Missing required argument 'CONFIG' for option '--config'" >&2
+            exit 1
+        fi
+
+        CONFIG_FILE="$2"
+        shift 2
+    elif [ "${1:0:1}" == "-" ]; then
         echo "Unknown option: $1" >&2
         exit 1
+    elif [ -z "$ACTION" ]; then
+        if [ "$1" == "help" ]; then
+            print_help
+            exit
+        fi
+
+        ACTION="$1"
+        shift
+    else
+        echo "Unknown argument: $1" >&2
+        exit 1
     fi
-    shift
 done
 
-if [ -z "$COMMAND" ] || [ -z "$CONFIG_FILE" ]; then
+if [ -z "$ACTION" ]; then
+    echo "Missing required argument 'ACTION'" >&2
+    echo >&2
     print_usage >&2
     exit 1
 fi
@@ -63,7 +88,11 @@ fi
 # source helper functions
 source "$LIB_DIR/helper.sh.inc"
 
-# source config
+# source config file
+if [ "${CONFIG_FILE:0:1}" != "/" ]; then
+    CONFIG_FILE="$CONFIG_DIR/$CONFIG_FILE"
+fi
+
 if [ ! -e "$CONFIG_FILE" ]; then
     echo "Invalid config file '$CONFIG_FILE': No such file or directory" >&2
     exit 1
@@ -77,37 +106,40 @@ fi
 
 source "$CONFIG_FILE"
 
-if [ -z "$IMAGE" ]; then
+if [ -z "${IMAGE:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'IMAGE'" >&2
     exit 1
-elif [ -z "$UNIT_TEMPLATE" ]; then
+elif [ -z "${UNIT_TEMPLATE:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'UNIT_TEMPLATE'" >&2
     exit 1
-elif [ -z "$BUILDER_IMAGE" ]; then
+elif [ -z "${BUILDER_IMAGE:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'BUILDER_IMAGE'" >&2
     exit 1
-elif [ -z "$CONFIG_PATH" ]; then
+elif [ -z "${CONFIG_PATH:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'CONFIG_PATH'" >&2
     exit 1
-elif [ -z "$ARCHIVES_PATH" ]; then
+elif [ -z "${ARCHIVES_PATH:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'ARCHIVES_PATH'" >&2
     exit 1
 fi
 
-# set default variables
-[[ "$IMAGE" == *:* ]] || IMAGE="$IMAGE:latest"
-[ -n "$CONTAINER" ] || CONTAINER="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
-[ -n "$UNIT" ] || UNIT="container-$CONTAINER.service"
-[ -n "$BUILDER_USER" ] || BUILDER_USER="root"
-[ -n "$BUILDER_CONTAINER" ] || BUILDER_CONTAINER="$(basename "$BUILDER_IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+# set default config values
+[[ "$IMAGE" == *:* ]] || [[ "$IMAGE" == *@* ]] || IMAGE="$IMAGE:latest"
+[ -n "${CONTAINER:-}" ] || CONTAINER="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+[ -n "${UNIT:-}" ] || UNIT="container-$CONTAINER.service"
+[ -n "${BUILDER_USER:-}" ] || BUILDER_USER="$(id -un)"
+[ -n "${BUILDER_CONTAINER:-}" ] || BUILDER_CONTAINER="$(basename "$BUILDER_IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
 
-# call command
-if [ ! -f "$LIB_DIR/$COMMAND.sh" ] || [ ! -r "$LIB_DIR/$COMMAND.sh" ]; then
-    echo "Invalid command: $COMMAND" >&2
+# call action
+if [ ! -e "$LIB_DIR/$ACTION.sh" ]; then
+    echo "Invalid action '$ACTION': Action not found" >&2
+    exit 1
+elif [ ! -f "$LIB_DIR/$ACTION.sh" ] || [ ! -r "$LIB_DIR/$ACTION.sh" ]; then
+    echo "Invalid action '$ACTION': Action is invalid" >&2
     exit 1
 fi
 
-source "$LIB_DIR/$COMMAND.sh"
+source "$LIB_DIR/$ACTION.sh"
 
-command_info
-command_exec
+action_info
+action_exec "$@"

@@ -9,12 +9,12 @@
 # SPDX-License-Identifier: MIT
 # License-Filename: LICENSE
 
-command_info() {
-    echo + "IMAGE=\"$IMAGE\"" >&2
-    echo + "ARCHIVES_PATH=\"$ARCHIVES_PATH\"" >&2
+action_info() {
+    echo + "IMAGE=${IMAGE@Q}" >&2
+    echo + "ARCHIVES_PATH=${ARCHIVES_PATH@Q}" >&2
 }
 
-command_exec() {
+action_exec() {
     local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
     local TAG="$(basename "$IMAGE" | cut -s -d ':' -f 2 | cut -d '@' -f 1)"
 
@@ -22,14 +22,14 @@ command_exec() {
     check_oci_archive
     check_oci_image "$IMAGE"
 
-    echo + "DIGEST=\"\$(readlink $ARCHIVES_PATH/$NAME/$TAG)\""
+    echo + "DIGEST=\"\$(readlink $(quote "$ARCHIVES_PATH/$NAME/$TAG"))\"" >&2
     local DIGEST="$(readlink "$ARCHIVES_PATH/$NAME/$TAG")"
 
-    echo + "ARCHIVE=\"$ARCHIVES_PATH/$NAME/$DIGEST/image\"" >&2
     local ARCHIVE="$ARCHIVES_PATH/$NAME/$DIGEST/image"
+    echo + "ARCHIVE=${ARCHIVE@Q}" >&2
 
-    echo + "METADATA=\"$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json\"" >&2
     local METADATA="$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json"
+    echo + "METADATA=${METADATA@Q}" >&2
 
     # check image metadata
     if ! jq -e --arg NAME "$NAME" '.[]["Name"] == $NAME' "$METADATA" > /dev/null; then
@@ -48,7 +48,7 @@ command_exec() {
     fi
 
     # import image
-    echo + "IMAGE_ID=\"\$(podman pull oci-archive:$ARCHIVE)\"" >&2
+    echo + "IMAGE_ID=\"\$(podman pull $(quote "oci-archive:$ARCHIVE"))\"" >&2
     local IMAGE_ID="$(podman pull "oci-archive:$ARCHIVE" || true)"
 
     if [ -z "$IMAGE_ID" ]; then
@@ -57,15 +57,14 @@ command_exec() {
     fi
 
     if [ "$IMAGE_ID" != "$(jq -r '.[]["Id"]' "$METADATA")" ]; then
-        echo + "podman rmi $IMAGE_ID" >&2
-        podman rmi "$IMAGE_ID" || true
+        cmd podman rmi "$IMAGE_ID" || true
 
         echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': Image ID mismatch" >&2
         exit 1
     fi
 
     # tag image
-    echo + "IMPORT_TAGS=( \$(jq -r '.[][\"Tags\"]' $METADATA) )" >&2
+    echo + "IMPORT_TAGS=( \$(jq -r '.[][\"Tags\"]' $(quote "$METADATA")) )" >&2
 
     local IMPORT_TAGS=()
     for (( INDEX=0, MAX="$(jq '.[]["Tags"] | length' "$METADATA")" ; INDEX < MAX ; INDEX++ )); do
@@ -73,7 +72,6 @@ command_exec() {
     done
 
     for IMPORT_TAG in "${IMPORT_TAGS[@]}"; do
-        echo + "podman tag $IMAGE_ID $NAME:$IMPORT_TAG" >&2
-        podman tag "$IMAGE_ID" "$NAME:$IMPORT_TAG"
+        cmd podman tag "$IMAGE_ID" "$NAME:$IMPORT_TAG"
     done
 }
