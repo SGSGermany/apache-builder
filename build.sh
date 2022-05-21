@@ -41,9 +41,6 @@ cmd buildah run "$CONTAINER" -- \
     pacman -Sy --noconfirm podman buildah skopeo rsync jq
 
 cmd buildah run "$CONTAINER" -- \
-    sh -c "pacman -Qdtq | xargs -d'\n' -r -- pacman -Rs --noconfirm"
-
-cmd buildah run "$CONTAINER" -- \
     groupadd -g 65536 apache-builder
 
 cmd buildah run "$CONTAINER" -- \
