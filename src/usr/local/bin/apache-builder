@@ -91,28 +91,37 @@ get_host_gid() {
     echo "$RESULT"
 }
 
+# source container environment
+if [ ! -f "$BUILD_DIR/container.env" ]; then
+    echo "ERROR: Unable to read default container environment '$BUILD_DIR/container.env': No such file or directory" >&2
+    exit 1
+fi
+
+echo + "source $BUILD_DIR/container.env" >&2
+source "$BUILD_DIR/container.env"
+
 if [ -f "$CONFIG_DIR/container.env" ]; then
     echo + "source $CONFIG_DIR/container.env" >&2
     source "$CONFIG_DIR/container.env"
-elif [ -f "$BUILD_DIR/container.env" ]; then
-    echo + "source $BUILD_DIR/container.env" >&2
-    source "$BUILD_DIR/container.env"
-else
-    echo "ERROR: Unable to read container environment: No such file or directory" >&2
+fi
+
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
+
+# source build config
+if [ ! -f "$BUILD_DIR/config.env" ]; then
+    echo "ERROR: Unable to read default Apache build config '$BUILD_DIR/config.env': No such file or directory" >&2
     exit 1
 fi
+
+echo + "source $BUILD_DIR/config.env" >&2
+source "$BUILD_DIR/config.env"
 
 if [ -f "$CONFIG_DIR/config.env" ]; then
     echo + "source $CONFIG_DIR/config.env" >&2
     source "$CONFIG_DIR/config.env"
-elif [ -f "$BUILD_DIR/config.env" ]; then
-    echo + "source $BUILD_DIR/config.env" >&2
-    source "$BUILD_DIR/config.env"
-else
-    echo "ERROR: Unable to read Apache build config: No such file or directory" >&2
-    exit 1
 fi
 
+# get sites templates
 if [ -d "$CONFIG_DIR/sites-templates" ]; then
     echo + "SITES_TEMPLATES=\"$CONFIG_DIR/sites-templates\"" >&2
     SITES_TEMPLATES="$CONFIG_DIR/sites-templates"
@@ -120,8 +129,6 @@ else
     echo + "SITES_TEMPLATES=\"$BUILD_DIR/sites-templates\"" >&2
     SITES_TEMPLATES="$BUILD_DIR/sites-templates"
 fi
-
-readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
 # build container
 PODMAN_CREATE_PARAMS=()
