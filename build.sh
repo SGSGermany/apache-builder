@@ -64,7 +64,7 @@ cmd buildah config \
 cmd buildah config \
     --workingdir "/var/local/apache-builder" \
     --entrypoint '[ "/entrypoint.sh" ]' \
-    --cmd "apache-builder" \
+    --cmd '[ "apache-builder" ]' \
     --user "apache-builder" \
     "$CONTAINER"
 

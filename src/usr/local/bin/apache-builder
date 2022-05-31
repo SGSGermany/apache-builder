@@ -452,7 +452,7 @@ JQ_TEMPLATE="$(cat <<'EOF'
 EOF
 )"
 
-echo + "podman image inspect $IMAGE:${TAGS[0]} | jq … | tee -a $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
+echo + "podman image inspect $IMAGE:${TAGS[0]} | jq … | tee $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
 podman inspect "$IMAGE:${TAGS[0]}" \
     | jq \
         --arg ID "$IMAGE_ID" \
