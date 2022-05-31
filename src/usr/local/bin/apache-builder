@@ -351,6 +351,13 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     fi
 done
 
+# networking
+PODMAN_CREATE_PARAMS+=( --net "$CONTAINER_NETWORK" )
+
+for CONTAINER_PUBLISH_PORT in "${CONTAINER_PUBLISH_PORTS[@]}"; do
+    PODMAN_CREATE_PARAMS+=( --publish "$CONTAINER_PUBLISH_PORT" )
+done
+
 # image annotations
 cmd buildah config \
     --annotation org.opencontainers.image.title- \
@@ -410,7 +417,6 @@ PODMAN_CREATE=(
         --subgidname "$HOST_USERNS" --gidmap "65536:$(get_host_gid apache2):1" \
             --gidmap "65537:$(get_host_gid php-sock):1" --gidmap "65538:$(get_host_gid acme):1" \
         "${PODMAN_CREATE_PARAMS[@]}" \
-        --net "$CONTAINER_NETWORK" -p "80:80/tcp" -p "443:443/tcp" \
         "$IMAGE_ID"
 )
 
