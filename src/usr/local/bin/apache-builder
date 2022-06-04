@@ -36,10 +36,6 @@ create_site_conf() {
     local SOURCE_PATH="$1"
     local TARGET_PATH="${2:-$1}"
 
-    if [ -f "$MOUNT/etc/apache2/sites-available/$TARGET_PATH" ]; then
-        return 1
-    fi
-
     local TARGET_DIR="$(dirname "$TARGET_PATH")"
     if [ "$TARGET_DIR" != "." ]; then
         echo + "mkdir -p …/etc/apache2/sites-available/$TARGET_DIR" >&2
@@ -48,9 +44,12 @@ create_site_conf() {
 
     echo + "envsubst < $SITES_TEMPLATES/$SOURCE_PATH > …/etc/apache2/sites-available/$TARGET_PATH" >&2
     envsubst \
-        SITE="$SITE" SITE_MODE="$SITE_MODE" SITE_OWNER="$SITE_OWNER" \
-        SITE_UID="$SITE_UID" SITE_WEBMASTER="$SITE_WEBMASTER" \
-        SITE_ALIASES="$SITE_ALIASES" SITE_URL="$SITE_URL" \
+        SITE="$SITE" \
+        SITE_MODE="$SITE_MODE" \
+        SITE_OWNER="$SITE_OWNER" \
+        SITE_WEBMASTER="$SITE_WEBMASTER" \
+        SITE_ALIASES="$SITE_ALIASES" \
+        SITE_URL="$SITE_URL" \
         < "$SITES_TEMPLATES/$SOURCE_PATH" \
         > "$MOUNT/etc/apache2/sites-available/$TARGET_PATH"
 }
@@ -58,6 +57,13 @@ create_site_conf() {
 get_host_path() {
     (
         set +u
+
+        if [ "$SITE" == "default" ]; then
+            local HOST_PATH_VAR="HOST_DEFAULT_${1^^}_PATH"
+            [ -n "${!HOST_PATH_VAR}" ] || return 1
+            echo "${!HOST_PATH_VAR}"
+            return 0
+        fi
 
         local HOST_PATH=
         local ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
@@ -230,13 +236,22 @@ while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PH
 done < <(printf '%s\n' "${SITES[@]}" | sed -e 's/   */\t/g')
 
 # default site
-PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_DEFAULT_HTDOCS_PATH,dst=/var/www/default,ro=true" )
-PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_DEFAULT_LOGS_PATH,dst=/var/log/apache2/default" )
+[ "$DEFAULT_SITE_MODE" != "proxy" ] || DEFAULT_SITE_MODE="redirect"
+[ "$DEFAULT_SITE_MODE" != "redirect" ] || [ -n "$DEFAULT_SITE_URL" ] || DEFAULT_SITE_MODE="htdocs"
 
-cmd buildah config \
-    --volume "/var/www/default" \
-    --volume "/var/log/apache2/default" \
-    "$CONTAINER"
+SITES_DATA=(
+    "$(printf '%s=%q\n' \
+        SITE "default" \
+        SITE_MODE "$DEFAULT_SITE_MODE" \
+        SITE_OWNER "apache2" \
+        SITE_ENABLE_SSL "$DEFAULT_SITE_SSL" \
+        SITE_ENABLE_PHP "no" \
+        SITE_WEBMASTER "" \
+        SITE_ALIASES "" \
+        SITE_URL "$DEFAULT_SITE_URL" \
+    )"
+    "${SITES_DATA[@]}"
+)
 
 # setup sites
 NEXT_SITE_UID=65539
@@ -246,7 +261,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
 
     if ! buildah run "$CONTAINER" -- id -u "$SITE_OWNER" > /dev/null 2>&1; then
         SITE_UID="$((NEXT_SITE_UID++))"
-        printf '+ SITE_UID=%q' "$SITE_UID"
+        echo + "SITE_UID=$SITE_UID"
 
         cmd buildah run "$CONTAINER" -- \
             adduser -u "$SITE_UID" -s /sbin/nologin -D -h "/usr/local/apache2" -H "$SITE_OWNER"
@@ -256,16 +271,23 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     fi
 
     # virtual host config
-    SKIP_CREATE_CONFIG="no"
-    if [ "$SITE_ENABLE_SSL" != "yes" ]; then
-        echo + "create_site_conf virtual-host.conf $SITE.conf" >&2
-        create_site_conf "virtual-host.conf" "$SITE.conf" \
-            || { SKIP_CREATE_CONFIG="yes"; true; }
+    SITE_TEMPLATE=""
+    if [ "$SITE" != "default" ]; then
+        [ "$SITE_ENABLE_SSL" == "yes" ] \
+            && SITE_TEMPLATE="virtual-host-ssl.conf" \
+            || SITE_TEMPLATE="virtual-host.conf"
     else
-        echo + "create_site_conf virtual-host-ssl.conf $SITE.conf" >&2
-        create_site_conf "virtual-host-ssl.conf" "$SITE.conf" \
-            || { SKIP_CREATE_CONFIG="yes"; true; }
+        [ "$SITE_ENABLE_SSL" == "yes" ] \
+            && SITE_TEMPLATE="default-virtual-host-ssl.conf" \
+            || SITE_TEMPLATE="default-virtual-host.conf"
+    fi
 
+    SKIP_CREATE_CONFIG="no"
+    echo + "create_site_conf $SITE_TEMPLATE $SITE.conf" >&2
+    create_site_conf "$SITE_TEMPLATE" "$SITE.conf" \
+        || { SKIP_CREATE_CONFIG="yes"; true; }
+
+    if [ "$SITE_ENABLE_SSL" == "yes" ]; then
         # ssl cert/key directory
         if [ ! -d "$MOUNT/etc/apache2/ssl/$SITE" ]; then
             echo + "mkdir …/etc/apache2/ssl/$SITE" >&2
