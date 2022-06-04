@@ -49,6 +49,11 @@ action_exec() {
     while IFS=' ' read -r CHECK_IMAGE_ID CHECK_DIGEST; do
         [ "$(sed -ne 's/^sha256:\(.*\)$/\1/p' <<< "$CHECK_DIGEST")" != "$DIGEST" ] || continue
 
+        echo + "[ \"\$(podman ps --filter ancestor=$CHECK_DIGEST --filter status=running --format running)\" == \"running\" ]" >&2
+        if [ "$(podman ps --filter ancestor="$CHECK_DIGEST" --filter status="running" --format 'running')" == "running" ]; then
+            continue
+        fi
+
         cmd podman rmi "$CHECK_IMAGE_ID"
     done < <(podman images --filter reference="$NAME" --format '{{.Id}} {{.Digest}}' | sort -k 1 -u)
 }
