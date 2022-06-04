@@ -205,11 +205,9 @@ fi
 
 # read sites data
 SITES_DATA=()
-SITES_NEXT_UID=65539
 while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PHP; do
     ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
 
-    [ "$SITE_OWNER" == "apache2" ] || SITE_UID="$((SITES_NEXT_UID++))"
     SITE_WEBMASTER="webmaster@$(echo "$SITE" | rev | cut -d '.' -f 1-2 | rev)"
 
     SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
@@ -225,7 +223,6 @@ while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PH
         SITE_OWNER "$SITE_OWNER" \
         SITE_ENABLE_SSL "$SITE_ENABLE_SSL" \
         SITE_ENABLE_PHP "$SITE_ENABLE_PHP" \
-        SITE_UID "$SITE_UID" \
         SITE_WEBMASTER "$SITE_WEBMASTER" \
         SITE_ALIASES "$SITE_ALIASES" \
         SITE_URL "$SITE_URL" \
@@ -242,11 +239,15 @@ cmd buildah config \
     "$CONTAINER"
 
 # setup sites
+NEXT_SITE_UID=65539
 for SITE_DATA in "${SITES_DATA[@]}"; do
     echo "$SITE_DATA" | xargs printf '+ %s\n' >&2
     eval "$SITE_DATA"
 
     if ! buildah run "$CONTAINER" -- id -u "$SITE_OWNER" > /dev/null 2>&1; then
+        SITE_UID="$((NEXT_SITE_UID++))"
+        printf '+ SITE_UID=%q' "$SITE_UID"
+
         cmd buildah run "$CONTAINER" -- \
             adduser -u "$SITE_UID" -s /sbin/nologin -D -h "/usr/local/apache2" -H "$SITE_OWNER"
 
