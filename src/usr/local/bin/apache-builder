@@ -25,7 +25,7 @@ cmd() {
 
 envsubst() {
     local VARIABLES="$(for ARG in "$@"; do
-        awk 'match($0, /([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
+        awk 'match($0, /^([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
     done)"
 
     env -i -C "/" "$@" \
@@ -410,18 +410,18 @@ cmd buildah config \
     "$CONTAINER"
 
 # commit image
-cmd buildah commit "$CONTAINER" "$IMAGE:${TAGS[0]}" > /dev/null
+cmd buildah commit "$CONTAINER" "localhost/$IMAGE:${TAGS[0]}" > /dev/null
 cmd buildah rm "$CONTAINER" > /dev/null
 
 for TAG in "${TAGS[@]:1}"; do
-    cmd buildah tag "$IMAGE:${TAGS[0]}" "$IMAGE:$TAG"
+    cmd buildah tag "localhost/$IMAGE:${TAGS[0]}" "localhost/$IMAGE:$TAG"
 done
 
 # create OCI archive
 echo + "IMAGE_ARCHIVE=\"\$(mktemp -u /tmp/apache-builder_XXXXXXXXXX)\"" >&2
 IMAGE_ARCHIVE="$(mktemp -u "/tmp/apache-builder_XXXXXXXXXX")"
 
-cmd podman push "$IMAGE:${TAGS[0]}" "oci-archive:$IMAGE_ARCHIVE"
+cmd podman push "localhost/$IMAGE:${TAGS[0]}" "oci-archive:$IMAGE_ARCHIVE"
 
 # publish OCI archive
 echo + "IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' oci-archive:$IMAGE_ARCHIVE | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
@@ -439,8 +439,8 @@ for TAG in "${TAGS[@]}"; do
 done
 
 # print result metadata
-echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $IMAGE:${TAGS[0]})\"" >&2
-IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE:${TAGS[0]}")"
+echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' localhost/$IMAGE:${TAGS[0]})\"" >&2
+IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:${TAGS[0]}")"
 
 PODMAN_CREATE=(
     podman create -t --name "$CONTAINER_NAME" \
@@ -477,8 +477,8 @@ JQ_TEMPLATE="$(cat <<'EOF'
 EOF
 )"
 
-echo + "podman image inspect $IMAGE:${TAGS[0]} | jq … | tee $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
-podman inspect "$IMAGE:${TAGS[0]}" \
+echo + "podman image inspect localhost/$IMAGE:${TAGS[0]} | jq … | tee $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
+podman inspect "localhost/$IMAGE:${TAGS[0]}" \
     | jq \
         --arg ID "$IMAGE_ID" \
         --arg NAME "$IMAGE" \

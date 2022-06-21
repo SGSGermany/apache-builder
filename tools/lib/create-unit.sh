@@ -11,7 +11,7 @@
 
 envsubst() {
     local VARIABLES="$(for ARG in "$@"; do
-        awk 'match($0, /([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
+        awk 'match($0, /^([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
     done)"
 
     env -i -C "/" "$@" \
