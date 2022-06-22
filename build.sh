@@ -13,44 +13,43 @@
 set -eu -o pipefail
 export LC_ALL=C
 
-cmd() {
-    echo + "$@"
-    "$@"
-    return $?
-}
+[ -v CI_TOOLS ] && [ "$CI_TOOLS" == "SGSGermany" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS' not set or invalid" >&2; exit 1; }
+
+[ -v CI_TOOLS_PATH ] && [ -d "$CI_TOOLS_PATH" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS_PATH' not set or invalid" >&2; exit 1; }
+
+source "$CI_TOOLS_PATH/helper/common.sh.inc"
+source "$CI_TOOLS_PATH/helper/container.sh.inc"
+source "$CI_TOOLS_PATH/helper/container-archlinux.sh.inc"
 
 BUILD_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-[ -f "$BUILD_DIR/container.env" ] && source "$BUILD_DIR/container.env" \
-    || { echo "ERROR: Container environment not found" >&2; exit 1; }
+source "$BUILD_DIR/container.env"
 
 readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
-echo + "CONTAINER=\"\$(buildah from $BASE_IMAGE)\""
+echo + "CONTAINER=\"\$(buildah from $(quote "$BASE_IMAGE"))\"" >&2
 CONTAINER="$(buildah from "$BASE_IMAGE")"
 
-echo + "MOUNT=\"\$(buildah mount $CONTAINER)\""
+echo + "MOUNT=\"\$(buildah mount $(quote "$CONTAINER"))\"" >&2
 MOUNT="$(buildah mount "$CONTAINER")"
 
-echo + "rsync -v -rl --exclude .gitignore ./src/ …/"
+pkg_install "$CONTAINER" \
+    podman \
+    buildah \
+    skopeo \
+    rsync \
+    jq
+
+echo + "rsync -v -rl --exclude .gitignore ./src/ …/" >&2
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/"
 
-cmd buildah run "$CONTAINER" -- \
-    pacman -Syu --noconfirm
-
-cmd buildah run "$CONTAINER" -- \
-    pacman -Sy --noconfirm podman buildah skopeo rsync jq
-
-cmd buildah run "$CONTAINER" -- \
-    groupadd -g 65536 apache-builder
-
-cmd buildah run "$CONTAINER" -- \
-    useradd -u 65536 -s "/sbin/nologin" \
-        -g apache-builder -N \
-        -d "/var/local/apache-builder" -M \
-        apache-builder
+user_add "$CONTAINER" apache-builder 65536 "/var/local/apache-builder"
 
 cmd buildah run "$CONTAINER" -- \
     chown -R -h apache-builder:apache-builder "/var/local/apache-builder"
+
+cleanup "$CONTAINER"
 
 cmd buildah config \
     --env BUILDAH_ISOLATION="chroot" \
@@ -79,9 +78,4 @@ cmd buildah config \
     --annotation org.opencontainers.image.base.digest="$(podman image inspect --format '{{.Digest}}' "$BASE_IMAGE")" \
     "$CONTAINER"
 
-cmd buildah commit "$CONTAINER" "$IMAGE:${TAGS[0]}"
-cmd buildah rm "$CONTAINER"
-
-for TAG in "${TAGS[@]:1}"; do
-    cmd buildah tag "$IMAGE:${TAGS[0]}" "$IMAGE:$TAG"
-done
+con_commit "$CONTAINER" "${TAGS[@]}"

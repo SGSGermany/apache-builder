@@ -9,7 +9,6 @@ on:
 concurrency: build
 
 env:
-  GIT_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
   CI_TOOLS_SETUP: https://raw.githubusercontent.com/SGSGermany/ci-tools/main/setup.sh
 
 jobs:
@@ -28,6 +27,7 @@ jobs:
       - name: Setup CI tools
         run: |
           . <(curl -fsS -L "$CI_TOOLS_SETUP" | bash -s ~/ci-tools)
+          echo "CI_TOOLS=$CI_TOOLS" | tee -a "$GITHUB_ENV"
           echo "CI_TOOLS_PATH=$CI_TOOLS_PATH" | tee -a "$GITHUB_ENV"
 
       - name: Checkout repository
@@ -42,7 +42,7 @@ jobs:
 
       - name: Generate container image tags
         run: |
-          TAGS="$("$CI_TOOLS_PATH/containers/generate-image-tags.sh" "${GITHUB_REF:-$GITHUB_SHA}")"
+          TAGS="$("$CI_TOOLS_PATH/containers/generate-image-tags.sh" "${GITHUB_REF:-$GITHUB_SHA}" "$GITHUB_RUN_ID.$GITHUB_RUN_NUMBER")"
           echo "TAGS=${TAGS:-latest}" | tee -a "$GITHUB_ENV"
 
       - name: Check for updates
@@ -62,7 +62,7 @@ jobs:
 
       - name: Container image metadata
         run: |
-          podman image inspect "$IMAGE:sha-$GITHUB_SHA"
+          podman image inspect "localhost/$IMAGE:sha-$GITHUB_SHA"
 
       - name: Push container image
         if: ${{ env.BUILD_ACTION != '' }}
