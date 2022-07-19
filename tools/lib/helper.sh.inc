@@ -138,10 +138,9 @@ check_oci_image() {
 
 check_image() {
     local IMAGE="$1"
-    local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
 
     if ! podman image exists "$IMAGE"; then
-        echo "Invalid Podman image '$NAME': Image '$IMAGE' not found" >&2
+        echo "Invalid Podman image '$IMAGE': Image not found" >&2
         return 1
     fi
 }

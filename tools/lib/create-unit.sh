@@ -39,7 +39,7 @@ action_info() {
 
 action_exec() {
     local UNIT_PATH="/etc/systemd/system/$UNIT"
-    local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+    local TAG="${TAGS%% *}"
 
     # check systemd unit
     if [ -h "$UNIT_PATH" ] && [ "$(realpath "$UNIT_PATH")" == "/dev/null" ]; then
@@ -66,19 +66,19 @@ action_exec() {
     fi
 
     # check image
-    check_image "$IMAGE"
+    check_image "$IMAGE:$TAG"
 
-    echo + "IMAGE_ID=\"\$(podman inspect --format '{{.Id}}' $(quote "$IMAGE"))\"" >&2
-    local IMAGE_ID="$(podman inspect --format '{{.Id}}' "$IMAGE")"
+    echo + "IMAGE_ID=\"\$(podman inspect --format '{{.Id}}' $(quote "$IMAGE:$TAG"))\"" >&2
+    local IMAGE_ID="$(podman inspect --format '{{.Id}}' "$IMAGE:$TAG")"
 
-    echo + "DIGEST=\"\$(podman inspect --format '{{.Digest}}' $(quote "$IMAGE") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
-    local DIGEST="$(podman inspect --format '{{.Digest}}' "$IMAGE" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
+    echo + "DIGEST=\"\$(podman inspect --format '{{.Digest}}' $(quote "$IMAGE:$TAG") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
+    local DIGEST="$(podman inspect --format '{{.Digest}}' "$IMAGE:$TAG" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
 
     # check OCI archive
     check_oci_archive
-    check_oci_image "$IMAGE@$DIGEST"
+    check_oci_image "$IMAGE:$TAG@$DIGEST"
 
-    local METADATA="$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json"
+    local METADATA="$ARCHIVES_PATH/$IMAGE/$DIGEST/metadata.json"
     echo + "METADATA=${METADATA@Q}" >&2
 
     # read create command
@@ -90,7 +90,7 @@ action_exec() {
     done
 
     if [ "${CREATE_COMMAND[0]}" != "podman" ] || [ "${CREATE_COMMAND[1]}" != "create" ] || [ "${CREATE_COMMAND[-1]}" != "$IMAGE_ID" ]; then
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid metadata of image '$IMAGE': Invalid create command: ${CREATE_COMMAND[@]}" >&2
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid metadata of image '$IMAGE:$TAG': Invalid create command: ${CREATE_COMMAND[@]}" >&2
         exit 1
     fi
 
@@ -111,7 +111,7 @@ action_exec() {
 
     echo + "envsubst '…' < $(quote "./systemd-templates/container-unit.service") > $(quote "$UNIT_PATH")" >&2
     envsubst \
-        IMAGE="$IMAGE" \
+        IMAGE="$IMAGE:$TAG" \
         CONTAINER="$CONTAINER" \
         UNIT="$UNIT" \
         PODMAN_RUN_ARGS="$SYSTEMD_EXEC" \

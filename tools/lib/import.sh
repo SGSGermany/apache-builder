@@ -15,35 +15,34 @@ action_info() {
 }
 
 action_exec() {
-    local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
-    local TAG="$(basename "$IMAGE" | cut -s -d ':' -f 2 | cut -d '@' -f 1)"
+    local TAG="${TAGS%% *}"
 
     # check OCI archive
     check_oci_archive
-    check_oci_image "$IMAGE"
+    check_oci_image "$IMAGE:$TAG"
 
-    echo + "DIGEST=\"\$(readlink $(quote "$ARCHIVES_PATH/$NAME/$TAG"))\"" >&2
-    local DIGEST="$(readlink "$ARCHIVES_PATH/$NAME/$TAG")"
+    echo + "DIGEST=\"\$(readlink $(quote "$ARCHIVES_PATH/$IMAGE/$TAG"))\"" >&2
+    local DIGEST="$(readlink "$ARCHIVES_PATH/$IMAGE/$TAG")"
 
-    local ARCHIVE="$ARCHIVES_PATH/$NAME/$DIGEST/image"
+    local ARCHIVE="$ARCHIVES_PATH/$IMAGE/$DIGEST/image"
     echo + "ARCHIVE=${ARCHIVE@Q}" >&2
 
-    local METADATA="$ARCHIVES_PATH/$NAME/$DIGEST/metadata.json"
+    local METADATA="$ARCHIVES_PATH/$IMAGE/$DIGEST/metadata.json"
     echo + "METADATA=${METADATA@Q}" >&2
 
     # check image metadata
-    if ! jq -e --arg NAME "$NAME" '.[]["Name"] == $NAME' "$METADATA" > /dev/null; then
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': Invalid image name in OCI archive" >&2
+    if ! jq -e --arg NAME "$IMAGE" '.[]["Name"] == $NAME' "$METADATA" > /dev/null; then
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE:$TAG': Invalid image name in OCI archive" >&2
         exit 1
     fi
 
     if ! jq -e --arg TAG "$TAG" '.[]["Tags"] | index($TAG)' "$METADATA" > /dev/null; then
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': Invalid image tags in OCI archive" >&2
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE:$TAG': Invalid image tags in OCI archive" >&2
         exit 1
     fi
 
     if [ "sha256:$DIGEST" != "$(skopeo inspect --format '{{.Digest}}' "oci-archive:$ARCHIVE")" ]; then
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': Image digest mismatch" >&2
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE:$TAG': Image digest mismatch" >&2
         exit 1
     fi
 
@@ -52,14 +51,14 @@ action_exec() {
     local IMAGE_ID="$(podman pull "oci-archive:$ARCHIVE" || true)"
 
     if [ -z "$IMAGE_ID" ]; then
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': \`podman pull\` failed" >&2
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE:$TAG': \`podman pull\` failed" >&2
         exit 1
     fi
 
     if [ "$IMAGE_ID" != "$(jq -r '.[]["Id"]' "$METADATA")" ]; then
         cmd podman rmi "$IMAGE_ID" || true
 
-        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE': Image ID mismatch" >&2
+        echo "Invalid OCI archive '$ARCHIVES_PATH': Invalid image '$IMAGE:$TAG': Image ID mismatch" >&2
         exit 1
     fi
 
@@ -72,6 +71,6 @@ action_exec() {
     done
 
     for IMPORT_TAG in "${IMPORT_TAGS[@]}"; do
-        cmd podman tag "$IMAGE_ID" "$NAME:$IMPORT_TAG"
+        cmd podman tag "$IMAGE_ID" "$IMAGE:$IMPORT_TAG"
     done
 }

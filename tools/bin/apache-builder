@@ -106,10 +106,7 @@ fi
 
 source "$CONFIG_FILE"
 
-if [ -z "${IMAGE:-}" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'IMAGE'" >&2
-    exit 1
-elif [ -z "${UNIT_TEMPLATE:-}" ]; then
+if [ -z "${UNIT_TEMPLATE:-}" ]; then
     echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'UNIT_TEMPLATE'" >&2
     exit 1
 elif [ -z "${BUILDER_IMAGE:-}" ]; then
@@ -123,9 +120,23 @@ elif [ -z "${ARCHIVES_PATH:-}" ]; then
     exit 1
 fi
 
+# import 'IMAGE' and 'TAGS' config from container.env
+source <(
+    . "$CONFIG_PATH/container.env";
+    printf '%s=%q\n' IMAGE "$IMAGE";
+    printf '%s=%q\n' TAGS "$TAGS";
+)
+
+if [ -z "${IMAGE:-}" ]; then
+    echo "Invalid container config file '$CONFIG_PATH/container.env': Missing required config variable 'IMAGE'" >&2
+    exit 1
+elif [ -z "${TAGS:-}" ]; then
+    echo "Invalid container config file '$CONFIG_PATH/container.env': Missing required config variable 'TAGS'" >&2
+    exit 1
+fi
+
 # set default config values
-[[ "$IMAGE" == *:* ]] || [[ "$IMAGE" == *@* ]] || IMAGE="$IMAGE:latest"
-[ -n "${CONTAINER:-}" ] || CONTAINER="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+[ -n "${CONTAINER:-}" ] || CONTAINER="$IMAGE"
 [ -n "${UNIT:-}" ] || UNIT="container-$CONTAINER.service"
 [ -n "${BUILDER_USER:-}" ] || BUILDER_USER="$(id -un)"
 [ -n "${BUILDER_CONTAINER:-}" ] || BUILDER_CONTAINER="$(basename "$BUILDER_IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"

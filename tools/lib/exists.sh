@@ -15,14 +15,13 @@ action_info() {
 }
 
 action_exec() {
-    local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
-    local TAG="$(basename "$IMAGE" | cut -s -d ':' -f 2 | cut -d '@' -f 1)"
+    local TAG="${TAGS%% *}"
 
     # check OCI archive
     check_oci_archive
-    check_oci_image "$IMAGE"
+    check_oci_image "$IMAGE:$TAG"
 
-    local METADATA="$ARCHIVES_PATH/$NAME/$TAG/metadata.json"
+    local METADATA="$ARCHIVES_PATH/$IMAGE/$TAG/metadata.json"
     echo + "METADATA=${METADATA@Q}" >&2
 
     echo + "IMAGE_ID=\"\$(jq -r '.[][\"Id\"]' $(quote "$METADATA"))\"" >&2

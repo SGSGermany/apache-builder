@@ -15,20 +15,19 @@ action_info() {
 }
 
 action_exec() {
-    local NAME="$(basename "$IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
-    local TAG="$(basename "$IMAGE" | cut -s -d ':' -f 2 | cut -d '@' -f 1)"
+    local TAG="${TAGS%% *}"
 
     # check OCI archive
     check_oci_archive
-    check_oci_image "$IMAGE"
+    check_oci_image "$IMAGE:$TAG"
 
-    echo + "DIGEST=\"\$(readlink $(quote "$ARCHIVES_PATH/$NAME/$TAG"))\"" >&2
-    local DIGEST="$(readlink "$ARCHIVES_PATH/$NAME/$TAG")"
+    echo + "DIGEST=\"\$(readlink $(quote "$ARCHIVES_PATH/$IMAGE/$TAG"))\"" >&2
+    local DIGEST="$(readlink "$ARCHIVES_PATH/$IMAGE/$TAG")"
 
     # delete old images in OCI archive
-    echo + "for CHECK_TAG in $(quote "$ARCHIVES_PATH/$NAME/")*; do … ; done" >&2
+    echo + "for CHECK_TAG in $(quote "$ARCHIVES_PATH/$IMAGE/")*; do … ; done" >&2
 
-    for CHECK_TAG in "$ARCHIVES_PATH/$NAME/"*; do
+    for CHECK_TAG in "$ARCHIVES_PATH/$IMAGE/"*; do
         if [ -h "$CHECK_TAG" ]; then
             [ "$(readlink "$CHECK_TAG")" != "$DIGEST" ] || continue
 
@@ -44,7 +43,7 @@ action_exec() {
 
     # delete old images in Podman storage
     echo + "while IFS=' ' read -r CHECK_IMAGE_ID CHECK_DIGEST; do … ; done \\" >&2
-    echo + "    < <(podman images --filter reference=$(quote "$NAME") --format '{{.Id}} {{.Digest}}' | sort -k 1 -u)" >&2
+    echo + "    < <(podman images --filter reference=$(quote "$IMAGE") --format '{{.Id}} {{.Digest}}' | sort -k 1 -u)" >&2
 
     while IFS=' ' read -r CHECK_IMAGE_ID CHECK_DIGEST; do
         [ "$(sed -ne 's/^sha256:\(.*\)$/\1/p' <<< "$CHECK_DIGEST")" != "$DIGEST" ] || continue
@@ -55,5 +54,5 @@ action_exec() {
         fi
 
         cmd podman rmi "$CHECK_IMAGE_ID"
-    done < <(podman images --filter reference="$NAME" --format '{{.Id}} {{.Digest}}' | sort -k 1 -u)
+    done < <(podman images --filter reference="$IMAGE" --format '{{.Id}} {{.Digest}}' | sort -k 1 -u)
 }
