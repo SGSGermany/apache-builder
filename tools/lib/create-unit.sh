@@ -45,24 +45,9 @@ action_exec() {
     if [ -h "$UNIT_PATH" ] && [ "$(realpath "$UNIT_PATH")" == "/dev/null" ]; then
         echo "Invalid Systemd unit '$UNIT': Unit is masked" >&2
         exit 1
-    else
-        if unit_loaded "$UNIT"; then
-            if [ ! -e "$UNIT_PATH" ]; then
-                echo "Invalid Systemd unit '$UNIT': Unit is loaded, but unit file '$UNIT_PATH' is invalid: No such file or directory" >&2
-                exit 1
-            elif [ ! -f "$UNIT_PATH" ]; then
-                echo "Invalid Systemd unit '$UNIT': Unit is loaded, but unit file '$UNIT_PATH' is invalid: Not a file" >&2
-                exit 1
-            fi
-        elif [ -e "$UNIT_PATH" ]; then
-            if [ ! -f "$UNIT_PATH" ]; then
-                echo "Invalid Systemd unit '$UNIT': Invalid unit file '$UNIT_PATH': Not a file" >&2
-                exit 1
-            else
-                echo "Invalid Systemd unit '$UNIT': Invalid unit file '$UNIT_PATH': Unit not loaded" >&2
-                exit 1
-            fi
-        fi
+    elif [ -e "$UNIT_PATH" ] && [ ! -f "$UNIT_PATH" ]; then
+        echo "Invalid Systemd unit '$UNIT': Invalid unit file '$UNIT_PATH': Not a file" >&2
+        exit 1
     fi
 
     # check image
