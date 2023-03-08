@@ -185,7 +185,7 @@ run_builder() {
     # prepare `podman run` options
     local OPTIONS=()
 
-    OPTIONS+=( --interactive )
+    OPTIONS+=( -i )
 
     while [ $# -gt 0 ] && [ "${1:1:1}" == "-" ]; do
         OPTIONS+=( "$1" )
@@ -193,7 +193,8 @@ run_builder() {
     done
 
     OPTIONS+=( --name "$BUILDER_CONTAINER" )
-    OPTIONS+=( --pull "always" --rm )
+    OPTIONS+=( --pull "always" )
+    OPTIONS+=( --rm )
     OPTIONS+=( --log-driver "none" )
 
     # prepare `podman run` params
@@ -208,7 +209,7 @@ run_builder() {
     local EXEC=( podman run "${OPTIONS[@]}" "${PARAMS[@]}" "$BUILDER_IMAGE" )
 
     if [ "$BUILDER_USER" != "$(id -un)" ]; then
-        cmd sudo --login --user "$BUILDER_USER" -- "${EXEC[@]}" "$@"
+        cmd sudo -i -u "$BUILDER_USER" -- "${EXEC[@]}" "$@"
     else
         cmd "${EXEC[@]}" "$@"
     fi
