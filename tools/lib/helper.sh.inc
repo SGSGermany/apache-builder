@@ -196,14 +196,14 @@ run_builder() {
     OPTIONS+=( --pull "always" )
     OPTIONS+=( --rm )
     OPTIONS+=( --log-driver "none" )
+    OPTIONS+=( --privileged )
 
     # prepare `podman run` params
     local PARAMS=()
 
-    PARAMS+=( --uidmap 0:1:65536 --uidmap 65536:0:1 )
-    PARAMS+=( --gidmap 0:1:65536 --gidmap 65536:0:1 )
     PARAMS+=( --mount type="bind",src="$CONFIG_PATH",dst="/etc/apache-builder",ro="true" )
     PARAMS+=( --mount type="bind",src="$ARCHIVES_PATH",dst="/var/local/apache-builder/archives" )
+    PARAMS+=( --volume "/var/lib/containers" )
 
     # execute `podman run`
     local EXEC=( podman run "${OPTIONS[@]}" "${PARAMS[@]}" "$BUILDER_IMAGE" )

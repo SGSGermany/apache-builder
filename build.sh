@@ -44,27 +44,17 @@ pkg_install "$CONTAINER" \
 echo + "rsync -v -rl --exclude .gitignore ./src/ …/" >&2
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/"
 
-user_add "$CONTAINER" apache-builder 65536 "/var/local/apache-builder"
-
-cmd buildah run "$CONTAINER" -- \
-    chown -R -h apache-builder:apache-builder "/var/local/apache-builder"
-
 cleanup "$CONTAINER"
-
-cmd buildah config \
-    --env BUILDAH_ISOLATION="chroot" \
-    "$CONTAINER"
 
 cmd buildah config \
     --volume "/etc/apache-builder" \
     --volume "/var/local/apache-builder/archives" \
+    --volume "/var/lib/containers" \
     "$CONTAINER"
 
 cmd buildah config \
     --workingdir "/var/local/apache-builder" \
-    --entrypoint '[ "/entrypoint.sh" ]' \
     --cmd '[ "apache-builder" ]' \
-    --user "apache-builder" \
     "$CONTAINER"
 
 cmd buildah config \
