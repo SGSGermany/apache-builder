@@ -49,6 +49,7 @@ create_site_conf() {
         SITE_OWNER="$SITE_OWNER" \
         SITE_WEBMASTER="$SITE_WEBMASTER" \
         SITE_ALIASES="$SITE_ALIASES" \
+        SITE_HOME="$SITE_HOME" \
         SITE_URL="$SITE_URL" \
         < "$SITES_TEMPLATES/$SOURCE_PATH" \
         > "$MOUNT/etc/apache2/sites-available/$TARGET_PATH"
@@ -218,10 +219,9 @@ while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PH
 
     SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
 
+    [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_HOME="https://$SITE" || SITE_HOME="http://$SITE"
+
     SITE_URL="$(printf '%s\n' "${SITES_URLS[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
-    if [ -z "$SITE_URL" ]; then
-        [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_URL="https://$SITE" || SITE_URL="http://$SITE"
-    fi
 
     SITES_DATA+=( "$(printf '%s=%q\n' \
         SITE "$SITE" \
@@ -231,6 +231,7 @@ while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PH
         SITE_ENABLE_PHP "$SITE_ENABLE_PHP" \
         SITE_WEBMASTER "$SITE_WEBMASTER" \
         SITE_ALIASES "$SITE_ALIASES" \
+        SITE_HOME "$SITE_HOME" \
         SITE_URL "$SITE_URL" \
     )" )
 done < <(printf '%s\n' "${SITES[@]}" | sed -e 's/   */\t/g')
@@ -248,6 +249,7 @@ SITES_DATA=(
         SITE_ENABLE_PHP "no" \
         SITE_WEBMASTER "" \
         SITE_ALIASES "" \
+        SITE_HOME "" \
         SITE_URL "$DEFAULT_SITE_URL" \
     )"
     "${SITES_DATA[@]}"
