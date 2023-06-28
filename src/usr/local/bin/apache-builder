@@ -11,14 +11,26 @@
 # License-Filename: LICENSE
 
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 shopt -s nullglob
 
 CONFIG_DIR="/etc/apache-builder"
 BUILD_DIR="/var/local/apache-builder"
 
+quote() {
+    local QUOTED=""
+    for ARG in "$@"; do
+        [ "$(printf '%q' "$ARG")" == "$ARG" ] \
+            && QUOTED+=" $ARG" \
+            || QUOTED+=" ${ARG@Q}"
+    done
+
+    echo "${QUOTED:1}"
+}
+
 cmd() {
-    echo + "$@" >&2
+    echo + "$(quote "$@")" >&2
+
     "$@"
     return $?
 }
@@ -38,11 +50,11 @@ create_site_conf() {
 
     local TARGET_DIR="$(dirname "$TARGET_PATH")"
     if [ "$TARGET_DIR" != "." ]; then
-        echo + "mkdir -p …/etc/apache2/sites-available/$TARGET_DIR" >&2
+        echo + "mkdir -p $(quote "…/etc/apache2/sites-available/$TARGET_DIR")" >&2
         ( cd "$MOUNT/etc/apache2/sites-available" ; mkdir -p "$TARGET_DIR" )
     fi
 
-    echo + "envsubst < $SITES_TEMPLATES/$SOURCE_PATH > …/etc/apache2/sites-available/$TARGET_PATH" >&2
+    echo + "envsubst < $(quote "$SITES_TEMPLATES/$SOURCE_PATH") > $(quote "…/etc/apache2/sites-available/$TARGET_PATH")" >&2
     envsubst \
         SITE="$SITE" \
         SITE_MODE="$SITE_MODE" \
@@ -104,11 +116,11 @@ if [ ! -f "$BUILD_DIR/container.env" ]; then
     exit 1
 fi
 
-echo + "source $BUILD_DIR/container.env" >&2
+echo + "source $(quote "$BUILD_DIR/container.env")" >&2
 source "$BUILD_DIR/container.env"
 
 if [ -f "$CONFIG_DIR/container.env" ]; then
-    echo + "source $CONFIG_DIR/container.env" >&2
+    echo + "source $(quote "$CONFIG_DIR/container.env")" >&2
     source "$CONFIG_DIR/container.env"
 fi
 
@@ -120,30 +132,30 @@ if [ ! -f "$BUILD_DIR/config.env" ]; then
     exit 1
 fi
 
-echo + "source $BUILD_DIR/config.env" >&2
+echo + "source $(quote "$BUILD_DIR/config.env")" >&2
 source "$BUILD_DIR/config.env"
 
 if [ -f "$CONFIG_DIR/config.env" ]; then
-    echo + "source $CONFIG_DIR/config.env" >&2
+    echo + "source $(quote "$CONFIG_DIR/config.env")" >&2
     source "$CONFIG_DIR/config.env"
 fi
 
 # get sites templates
 if [ -d "$CONFIG_DIR/sites-templates" ]; then
-    echo + "SITES_TEMPLATES=\"$CONFIG_DIR/sites-templates\"" >&2
+    echo + "SITES_TEMPLATES=$(quote "$CONFIG_DIR/sites-templates")" >&2
     SITES_TEMPLATES="$CONFIG_DIR/sites-templates"
 else
-    echo + "SITES_TEMPLATES=\"$BUILD_DIR/sites-templates\"" >&2
+    echo + "SITES_TEMPLATES=$(quote "$BUILD_DIR/sites-templates")" >&2
     SITES_TEMPLATES="$BUILD_DIR/sites-templates"
 fi
 
 # build container
 PODMAN_CREATE_PARAMS=()
 
-echo + "CONTAINER=\"\$(buildah from $BASE_IMAGE)\"" >&2
+echo + "CONTAINER=\"\$(buildah from $(quote "$BASE_IMAGE"))\"" >&2
 CONTAINER="$(buildah from "$BASE_IMAGE")"
 
-echo + "MOUNT=\"\$(buildah mount $CONTAINER)\"" >&2
+echo + "MOUNT=\"\$(buildah mount $(quote "$CONTAINER"))\"" >&2
 MOUNT="$(buildah mount "$CONTAINER")"
 
 cmd buildah config \
@@ -153,20 +165,20 @@ cmd buildah config \
     "$CONTAINER"
 
 # copy files
-echo + "rsync -v -rl --exclude .gitignore $BUILD_DIR/src/ …/" >&2
+echo + "rsync -v -rl --exclude .gitignore $(quote "$BUILD_DIR/src/") …/" >&2
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/" >&2
 
-echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/mods/ …/etc/apache2/mods-available/" >&2
+echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/mods/") …/etc/apache2/mods-available/" >&2
 rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/mods/" "$MOUNT/etc/apache2/mods-available/" >&2
 
-echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/conf/ …/etc/apache2/conf-available/" >&2
+echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/conf/") …/etc/apache2/conf-available/" >&2
 rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/conf/" "$MOUNT/etc/apache2/conf-available/" >&2
 
-echo + "rsync -v -rl --exclude .gitignore $CONFIG_DIR/sites/ …/etc/apache2/sites-available/" >&2
+echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/sites/") …/etc/apache2/sites-available/" >&2
 rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/sites/" "$MOUNT/etc/apache2/sites-available/" >&2
 
 # modules and configs
-echo + "buildah run $CONTAINER -- sh -c \"a2querymod | xargs a2dismod\"" >&2
+echo + "buildah run $(quote "$CONTAINER") -- sh -c \"a2querymod | xargs a2dismod\"" >&2
 buildah run "$CONTAINER" -- \
     sh -c "a2querymod | xargs a2dismod"
 
@@ -175,7 +187,7 @@ if [ "${#APACHE_MODULES[@]}" -gt 0 ]; then
         a2enmod "${APACHE_MODULES[@]}"
 fi
 
-echo + "buildah run $CONTAINER -- sh -c \"a2queryconf | xargs a2disconf\"" >&2
+echo + "buildah run $(quote "$CONTAINER") -- sh -c \"a2queryconf | xargs a2disconf\"" >&2
 buildah run "$CONTAINER" -- \
     sh -c "a2queryconf | xargs a2disconf"
 
@@ -203,7 +215,7 @@ cmd buildah config --volume "/var/www/acme-challenges" "$CONTAINER"
 
 # ssl DH parameters
 if [ -f "$CONFIG_DIR/ssl/dhparams.pem" ]; then
-    echo + "cp $CONFIG_DIR/ssl/dhparams.pem …/etc/apache2/ssl/dhparams.pem" >&2
+    echo + "cp $(quote "$CONFIG_DIR/ssl/dhparams.pem") …/etc/apache2/ssl/dhparams.pem" >&2
     cp "$CONFIG_DIR/ssl/dhparams.pem" "$MOUNT/etc/apache2/ssl/dhparams.pem"
 else
     echo + "openssl dhparam -out …/etc/apache2/ssl/dhparams.pem 2048" >&2
@@ -285,14 +297,14 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     fi
 
     SKIP_CREATE_CONFIG="no"
-    echo + "create_site_conf $SITE_TEMPLATE $SITE.conf" >&2
+    echo + "create_site_conf $SITE_TEMPLATE $(quote "$SITE.conf")" >&2
     create_site_conf "$SITE_TEMPLATE" "$SITE.conf" \
         || { SKIP_CREATE_CONFIG="yes"; true; }
 
     if [ "$SITE_ENABLE_SSL" == "yes" ]; then
         # ssl cert/key directory
         if [ ! -d "$MOUNT/etc/apache2/ssl/$SITE" ]; then
-            echo + "mkdir …/etc/apache2/ssl/$SITE" >&2
+            echo + "mkdir $(quote "…/etc/apache2/ssl/$SITE")" >&2
             mkdir "$MOUNT/etc/apache2/ssl/$SITE"
         fi
 
@@ -304,7 +316,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         "htdocs")
             # htdocs site config
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
-                echo + "create_site_conf conf.d/htdocs.conf $SITE.conf.d/htdocs.conf" >&2
+                echo + "create_site_conf conf.d/htdocs.conf $(quote "$SITE.conf.d/htdocs.conf")" >&2
                 create_site_conf "conf.d/htdocs.conf" "$SITE.conf.d/htdocs.conf" \
                     || { SKIP_CREATE_CONFIG="yes"; true; }
             fi
@@ -313,7 +325,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/htdocs.conf.d/"*".conf"; do
                     SITE_ADDITIONAL_CONF="htdocs.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
 
-                    echo + "create_site_conf conf.d/$SITE_ADDITIONAL_CONF $SITE.conf.d/$SITE_ADDITIONAL_CONF" >&2
+                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
                     create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
                 done
             fi
@@ -321,20 +333,20 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
             # htdocs php-fpm
             if [ "$SITE_ENABLE_PHP" == "yes" ]; then
                 if [ ! -d "$MOUNT/run/php-fpm/$SITE" ]; then
-                    echo + "mkdir …/run/php-fpm/$SITE" >&2
+                    echo + "mkdir $(quote "…/run/php-fpm/$SITE")" >&2
                     mkdir "$MOUNT/run/php-fpm/$SITE"
                 fi
 
                 PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "php_fpm"),dst=/run/php-fpm/$SITE,ro=true" )
                 cmd buildah config --volume "/run/php-fpm/$SITE" "$CONTAINER"
 
-                echo + "create_site_conf conf.d/php-fpm.conf $SITE.conf.d/php-fpm.conf" >&2
+                echo + "create_site_conf conf.d/php-fpm.conf $(quote "$SITE.conf.d/php-fpm.conf")" >&2
                 create_site_conf "conf.d/php-fpm.conf" "$SITE.conf.d/php-fpm.conf" || true
             fi
 
             # htdocs document root
             if [ ! -d "$MOUNT/var/www/$SITE" ]; then
-                echo + "mkdir …/var/www/$SITE" >&2
+                echo + "mkdir $(quote "…/var/www/$SITE")" >&2
                 mkdir "$MOUNT/var/www/$SITE"
             fi
 
@@ -345,7 +357,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         "proxy")
             # proxy site config
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
-                echo + "create_site_conf conf.d/proxy.conf $SITE.conf.d/proxy.conf" >&2
+                echo + "create_site_conf conf.d/proxy.conf $(quote "$SITE.conf.d/proxy.conf")" >&2
                 create_site_conf "conf.d/proxy.conf" "$SITE.conf.d/proxy.conf" \
                     || { SKIP_CREATE_CONFIG="yes"; true; }
             fi
@@ -354,7 +366,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/proxy.conf.d/"*".conf"; do
                     SITE_ADDITIONAL_CONF="proxy.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
 
-                    echo + "create_site_conf conf.d/$SITE_ADDITIONAL_CONF $SITE.conf.d/$SITE_ADDITIONAL_CONF" >&2
+                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
                     create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
                 done
             fi
@@ -363,7 +375,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         "redirect")
             # redirect site config
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
-                echo + "create_site_conf conf.d/redirect.conf $SITE.conf.d/redirect.conf" >&2
+                echo + "create_site_conf conf.d/redirect.conf $(quote "$SITE.conf.d/redirect.conf")" >&2
                 create_site_conf "conf.d/redirect.conf" "$SITE.conf.d/redirect.conf" || true
             fi
             ;;
@@ -371,7 +383,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
 
     # logs
     if [ ! -d "$MOUNT/var/log/apache2/$SITE" ]; then
-        echo + "mkdir …/var/log/apache2/$SITE" >&2
+        echo + "mkdir $(quote "…/var/log/apache2/$SITE")" >&2
         mkdir "$MOUNT/var/log/apache2/$SITE"
     fi
 
@@ -427,7 +439,7 @@ IMAGE_ARCHIVE="$(mktemp -u "/tmp/apache-builder_XXXXXXXXXX")"
 cmd podman push "localhost/$IMAGE:${TAGS[0]}" "oci-archive:$IMAGE_ARCHIVE"
 
 # publish OCI archive
-echo + "IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' oci-archive:$IMAGE_ARCHIVE | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
+echo + "IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' $(quote "oci-archive:$IMAGE_ARCHIVE") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
 IMAGE_DIGEST="$(skopeo inspect --format '{{.Digest}}' "oci-archive:$IMAGE_ARCHIVE" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
 
 if [ ! -d "$BUILD_DIR/archives/$IMAGE" ]; then
@@ -442,7 +454,7 @@ for TAG in "${TAGS[@]}"; do
 done
 
 # print result metadata
-echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' localhost/$IMAGE:${TAGS[0]})\"" >&2
+echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $(quote "localhost/$IMAGE:${TAGS[0]}"))\"" >&2
 IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:${TAGS[0]}")"
 
 PODMAN_CREATE=(
@@ -480,7 +492,8 @@ JQ_TEMPLATE="$(cat <<'EOF'
 EOF
 )"
 
-echo + "podman image inspect localhost/$IMAGE:${TAGS[0]} | jq … | tee $BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json" >&2
+echo + "podman image inspect $(quote "localhost/$IMAGE:${TAGS[0]}") | jq …" \
+    "| tee $(quote "$BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json")" >&2
 podman inspect "localhost/$IMAGE:${TAGS[0]}" \
     | jq \
         --arg ID "$IMAGE_ID" \

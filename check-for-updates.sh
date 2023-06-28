@@ -11,7 +11,7 @@
 # License-Filename: LICENSE
 
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 
 [ -v CI_TOOLS ] && [ "$CI_TOOLS" == "SGSGermany" ] \
     || { echo "Invalid build environment: Environment variable 'CI_TOOLS' not set or invalid" >&2; exit 1; }
@@ -30,7 +30,7 @@ TAG="${TAGS%% *}"
 PACKAGES=( podman buildah skopeo )
 
 # check whether the base image was updated
-chkupd_baseimage "$REGISTRY/$OWNER/$IMAGE" "$TAG" || exit 0
+chkupd_baseimage "$REGISTRY/$OWNER/$IMAGE" "$TAG" "${1:-}" || exit 0
 
 # check whether packages were updated
 chkupd_packages "$BASE_IMAGE" "$REGISTRY/$OWNER/$IMAGE:$TAG" "${PACKAGES[@]}" || exit 0

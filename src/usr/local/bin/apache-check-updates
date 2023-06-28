@@ -11,10 +11,21 @@
 # License-Filename: LICENSE
 
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 
 CONFIG_DIR="/etc/apache-builder"
 BUILD_DIR="/var/local/apache-builder"
+
+quote() {
+    local QUOTED=""
+    for ARG in "$@"; do
+        [ "$(printf '%q' "$ARG")" == "$ARG" ] \
+            && QUOTED+=" $ARG" \
+            || QUOTED+=" ${ARG@Q}"
+    done
+
+    echo "${QUOTED:1}"
+}
 
 print_usage() {
     echo "Usage:"
@@ -74,10 +85,10 @@ if [ ! -d "$BUILD_DIR/archives/$IMAGE/${TAGS[0]}" ]; then
 fi
 
 # compare base image digests
-echo + "BASE_IMAGE_DIGEST=\"\$(jq -r '.[][\"Parent\"][\"Digest\"]' $BUILD_DIR/archives/$IMAGE/${TAGS[0]}/metadata.json)\""
+echo + "BASE_IMAGE_DIGEST=\"\$(jq -r '.[][\"Parent\"][\"Digest\"]' $(quote "$BUILD_DIR/archives/$IMAGE/${TAGS[0]}/metadata.json"))\""
 BASE_IMAGE_DIGEST="$(jq -r '.[]["Parent"]["Digest"]' "$BUILD_DIR/archives/$IMAGE/${TAGS[0]}/metadata.json" || true)"
 
-echo + "LATEST_BASE_IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' docker://$BASE_IMAGE)\""
+echo + "LATEST_BASE_IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' $(quote "docker://$BASE_IMAGE"))\""
 LATEST_BASE_IMAGE_DIGEST="$(skopeo inspect --format '{{.Digest}}' "docker://$BASE_IMAGE" || true)"
 
 if [ -z "$LATEST_BASE_IMAGE_DIGEST" ]; then

@@ -8,10 +8,17 @@ on:
 concurrency: build
 
 env:
+  GIT_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
   CI_TOOLS_SETUP: https://raw.githubusercontent.com/SGSGermany/ci-tools/main/setup.sh
+
+defaults:
+  run:
+    shell: bash -eu -o pipefail {0}
 
 jobs:
   generate-jobs:
+    name: Generate jobs
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -32,8 +39,6 @@ jobs:
 
       - name: Generate jobs
         id: generate-jobs
-        env:
-          GIT_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
         run: |
           BUILD_REF="$("$CI_TOOLS_PATH/containers/generate-scheduled-jobs.sh")"
           
@@ -41,9 +46,11 @@ jobs:
           echo "$BUILD_REF"
           echo ::endgroup::
           
-          echo "::set-output name=BUILD_MATRIX::$(echo "$BUILD_REF" | jq -R . | jq -c -s '{"BUILD_REF": .}')"
+          echo "BUILD_MATRIX=$(jq -R . <<< "$BUILD_REF" | jq -c -s '{"BUILD_REF": .}')" >> $GITHUB_OUTPUT
 
   build:
+    name: Build & publish container
+
     needs: generate-jobs
 
     runs-on: ubuntu-latest
@@ -84,11 +91,11 @@ jobs:
       - name: Generate container image tags
         run: |
           TAGS="$("$CI_TOOLS_PATH/containers/generate-image-tags.sh" "$BUILD_REF" "$GITHUB_RUN_ID.$GITHUB_RUN_NUMBER")"
-          echo "TAGS=${TAGS:-latest}" | tee -a "$GITHUB_ENV"
+          echo "TAGS=$TAGS" | tee -a "$GITHUB_ENV"
 
       - name: Check for updates
         run: |
-          BUILD_ACTION="$(./check-for-updates.sh)"
+          BUILD_ACTION="$(./check-for-updates.sh "sha-$(git rev-parse HEAD)")"
           echo "BUILD_ACTION=$BUILD_ACTION" | tee -a "$GITHUB_ENV"
 
       - name: Build container image
