@@ -378,6 +378,15 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 echo + "create_site_conf conf.d/redirect.conf $(quote "$SITE.conf.d/redirect.conf")" >&2
                 create_site_conf "conf.d/redirect.conf" "$SITE.conf.d/redirect.conf" || true
             fi
+
+            if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+                for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/redirect.conf.d/"*".conf"; do
+                    SITE_ADDITIONAL_CONF="redirect.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
+
+                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
+                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                done
+            fi
             ;;
     esac
 
