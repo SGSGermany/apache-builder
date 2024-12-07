@@ -92,7 +92,7 @@ echo + "LATEST_BASE_IMAGE_DIGEST=\"\$(skopeo inspect --format '{{.Digest}}' $(qu
 LATEST_BASE_IMAGE_DIGEST="$(skopeo inspect --format '{{.Digest}}' "docker://$BASE_IMAGE" || true)"
 
 if [ -z "$LATEST_BASE_IMAGE_DIGEST" ]; then
-    echo "Failed to inspect latest base image '$BASE_IMAGE': \`skopeo inspect\` failed, likely there was no image with this tag found" >&2
+    echo "Failed to inspect latest base image '$BASE_IMAGE': \`skopeo inspect\` failed, likely because there was no image with this tag found" >&2
     echo "Image rebuild required" >&2
     exit 1
 fi
