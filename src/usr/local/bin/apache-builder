@@ -73,7 +73,7 @@ get_host_path() {
 
         if [ "$SITE" == "default" ]; then
             local HOST_PATH_VAR="HOST_DEFAULT_${1^^}_PATH"
-            [ -n "${!HOST_PATH_VAR}" ] || return 1
+            [ -n "${!HOST_PATH_VAR}" ] || { echo "ERROR: Unable to get host path of $1 directory for default site" >&2; return 1; }
             echo "${!HOST_PATH_VAR}"
             return 0
         fi
@@ -89,7 +89,7 @@ get_host_path() {
             HOST_PATH="$(envsubst SITE="$SITE" SITE_OWNER="$SITE_OWNER" <<< "${!HOST_PATH_PATTERN_VAR}")"
         fi
 
-        [ -n "$HOST_PATH" ] || return 1
+        [ -n "$HOST_PATH" ] || { echo "ERROR: Unable to get host path of $1 directory for site '$SITE'" >&2; return 1; }
         echo "$HOST_PATH"
     )
 }
@@ -98,7 +98,7 @@ get_host_uid() {
     local ESCAPED_USER="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
     local RESULT="$(printf '%s\n' "${HOST_UID_MAP[@]}" | sed -ne "s/^$ESCAPED_USER   *\(.*\)$/\1/p")"
 
-    [ -n "$RESULT" ] || return 1
+    [ -n "$RESULT" ] || { echo "ERROR: Unable to get host user ID of '$1'" >&2; return 1; }
     echo "$RESULT"
 }
 
@@ -106,7 +106,7 @@ get_host_gid() {
     local ESCAPED_GROUP="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
     local RESULT="$(printf '%s\n' "${HOST_GID_MAP[@]}" | sed -ne "s/^$ESCAPED_GROUP   *\(.*\)$/\1/p")"
 
-    [ -n "$RESULT" ] || return 1
+    [ -n "$RESULT" ] || { echo "ERROR: Unable to get host group ID of '$1'" >&2; return 1; }
     echo "$RESULT"
 }
 
@@ -168,14 +168,20 @@ cmd buildah config \
 echo + "rsync -v -rl --exclude .gitignore $(quote "$BUILD_DIR/src/") …/" >&2
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/" >&2
 
-echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/mods/") …/etc/apache2/mods-available/" >&2
-rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/mods/" "$MOUNT/etc/apache2/mods-available/" >&2
+if [ -d "$CONFIG_DIR/mods" ]; then
+    echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/mods/") …/etc/apache2/mods-available/" >&2
+    rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/mods/" "$MOUNT/etc/apache2/mods-available/" >&2
+fi
 
-echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/conf/") …/etc/apache2/conf-available/" >&2
-rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/conf/" "$MOUNT/etc/apache2/conf-available/" >&2
+if [ -d "$CONFIG_DIR/conf" ]; then
+    echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/conf/") …/etc/apache2/conf-available/" >&2
+    rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/conf/" "$MOUNT/etc/apache2/conf-available/" >&2
+fi
 
-echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/sites/") …/etc/apache2/sites-available/" >&2
-rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/sites/" "$MOUNT/etc/apache2/sites-available/" >&2
+if [ -d "$CONFIG_DIR/sites" ]; then
+    echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/sites/") …/etc/apache2/sites-available/" >&2
+    rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/sites/" "$MOUNT/etc/apache2/sites-available/" >&2
+fi
 
 # modules and configs
 echo + "buildah run $(quote "$CONTAINER") -- sh -c \"a2querymod | xargs a2dismod\"" >&2
@@ -218,35 +224,40 @@ if [ -f "$CONFIG_DIR/ssl/dhparams.pem" ]; then
     echo + "cp $(quote "$CONFIG_DIR/ssl/dhparams.pem") …/etc/apache2/ssl/dhparams.pem" >&2
     cp "$CONFIG_DIR/ssl/dhparams.pem" "$MOUNT/etc/apache2/ssl/dhparams.pem"
 else
-    echo + "openssl dhparam -out …/etc/apache2/ssl/dhparams.pem 2048" >&2
-    openssl dhparam -out "$MOUNT/etc/apache2/ssl/dhparams.pem" 2048
+    echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q ssl" >&2
+    if buildah run "$CONTAINER" -- a2querymod -q "ssl"; then
+        echo + "openssl dhparam -out …/etc/apache2/ssl/dhparams.pem 2048" >&2
+        openssl dhparam -out "$MOUNT/etc/apache2/ssl/dhparams.pem" 2048
+    fi
 fi
 
 # read sites data
 SITES_DATA=()
-while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PHP; do
-    ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
+if [ "${#SITES[@]}" -gt 0 ]; then
+    while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PHP; do
+        ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
 
-    SITE_WEBMASTER="webmaster@$(echo "$SITE" | rev | cut -d '.' -f 1-2 | rev)"
+        SITE_WEBMASTER="webmaster@$(echo "$SITE" | rev | cut -d '.' -f 1-2 | rev)"
 
-    SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+        SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
 
-    [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_HOME="https://$SITE" || SITE_HOME="http://$SITE"
+        [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_HOME="https://$SITE" || SITE_HOME="http://$SITE"
 
-    SITE_URL="$(printf '%s\n' "${SITES_URLS[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+        SITE_URL="$(printf '%s\n' "${SITES_URLS[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
 
-    SITES_DATA+=( "$(printf '%s=%q\n' \
-        SITE "$SITE" \
-        SITE_MODE "$SITE_MODE" \
-        SITE_OWNER "$SITE_OWNER" \
-        SITE_ENABLE_SSL "$SITE_ENABLE_SSL" \
-        SITE_ENABLE_PHP "$SITE_ENABLE_PHP" \
-        SITE_WEBMASTER "$SITE_WEBMASTER" \
-        SITE_ALIASES "$SITE_ALIASES" \
-        SITE_HOME "$SITE_HOME" \
-        SITE_URL "$SITE_URL" \
-    )" )
-done < <(printf '%s\n' "${SITES[@]}" | sed -e 's/   */\t/g')
+        SITES_DATA+=( "$(printf '%s=%q\n' \
+            SITE "$SITE" \
+            SITE_MODE "$SITE_MODE" \
+            SITE_OWNER "$SITE_OWNER" \
+            SITE_ENABLE_SSL "$SITE_ENABLE_SSL" \
+            SITE_ENABLE_PHP "$SITE_ENABLE_PHP" \
+            SITE_WEBMASTER "$SITE_WEBMASTER" \
+            SITE_ALIASES "$SITE_ALIASES" \
+            SITE_HOME "$SITE_HOME" \
+            SITE_URL "$SITE_URL" \
+        )" )
+    done < <(printf '%s\n' "${SITES[@]}" | sed -e 's/   */\t/g')
+fi
 
 # default site
 [ "$DEFAULT_SITE_MODE" != "proxy" ] || DEFAULT_SITE_MODE="redirect"
