@@ -159,6 +159,9 @@ CONTAINER="$(buildah from "$BASE_IMAGE")"
 echo + "MOUNT=\"\$(buildah mount $(quote "$CONTAINER"))\"" >&2
 MOUNT="$(buildah mount "$CONTAINER")"
 
+echo + "APACHE_VERSION=\"\$(buildah run $(quote "$CONTAINER") -- /bin/sh -c 'echo \"\$HTTPD_VERSION\"')\"" >&2
+APACHE_VERSION="$(buildah run "$CONTAINER" -- /bin/sh -c 'echo "$HTTPD_VERSION"')"
+
 cmd buildah config \
     --volume "/var/www-" \
     --volume "/var/log/apache2-" \
@@ -465,10 +468,18 @@ done
 cmd buildah config \
     --annotation org.opencontainers.image.title- \
     --annotation org.opencontainers.image.description- \
+    --annotation org.opencontainers.image.version- \
     --annotation org.opencontainers.image.url- \
+    --annotation org.opencontainers.image.source- \
+    --annotation org.opencontainers.image.revision- \
     --annotation org.opencontainers.image.authors- \
     --annotation org.opencontainers.image.vendor- \
     --annotation org.opencontainers.image.licenses- \
+    "$CONTAINER"
+
+cmd buildah config \
+    --annotation org.opencontainers.image.title="Apache HTTP server" \
+    --annotation org.opencontainers.image.version="$APACHE_VERSION" \
     "$CONTAINER"
 
 for ANNOTATION in "${ANNOTATIONS[@]}"; do
@@ -478,6 +489,7 @@ done
 cmd buildah config \
     --annotation org.opencontainers.image.base.name="$BASE_IMAGE" \
     --annotation org.opencontainers.image.base.digest="$(podman image inspect --format '{{.Digest}}' "$BASE_IMAGE")" \
+    --annotation org.opencontainers.image.created="$(date --utc --iso-8601=seconds)" \
     "$CONTAINER"
 
 # commit image
