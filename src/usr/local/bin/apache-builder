@@ -151,6 +151,7 @@ fi
 
 # build container
 PODMAN_CREATE_PARAMS=()
+NEXT_UID=65537
 
 echo + "CONTAINER=\"\$(buildah from $(quote "$BASE_IMAGE"))\"" >&2
 CONTAINER="$(buildah from "$BASE_IMAGE")"
@@ -163,6 +164,11 @@ cmd buildah config \
     --volume "/var/log/apache2-" \
     --volume "/etc/apache2/ssl-" \
     "$CONTAINER"
+
+PODMAN_CREATE_PARAMS+=(
+    --subuidname "$HOST_USERNS" --uidmap "65536:$(get_host_uid apache2):1"
+    --subgidname "$HOST_USERNS" --gidmap "65536:$(get_host_gid apache2):1"
+)
 
 # copy files
 echo + "rsync -v -rl --exclude .gitignore $(quote "$BUILD_DIR/src/") …/" >&2
@@ -202,30 +208,52 @@ if [ "${#APACHE_CONFIGS[@]}" -gt 0 ]; then
         a2enconf "${APACHE_CONFIGS[@]}"
 fi
 
-# php sockets
-cmd buildah run "$CONTAINER" -- \
-    adduser -u 65537 -s "/sbin/nologin" -D -h "/" -H php-sock
+# check whether SSL and php-fpm are available
+ENABLE_SSL="yes"
+ENABLE_PHP="yes"
 
-cmd buildah run "$CONTAINER" -- \
-    addgroup apache2 php-sock
+echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q ssl" >&2
+buildah run "$CONTAINER" -- a2querymod -q "ssl" || ENABLE_SSL="no"
+
+echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q proxy proxy_fcgi" >&2
+buildah run "$CONTAINER" -- a2querymod -q "proxy" "proxy_fcgi" || ENABLE_PHP="no"
+
+# php sockets
+if [ "$ENABLE_PHP" == "yes" ]; then
+    PHP_SOCK_UID="$((NEXT_UID++))"
+    echo + "PHP_SOCK_UID=$PHP_SOCK_UID"
+
+    PODMAN_CREATE_PARAMS+=( --uidmap "$PHP_SOCK_UID:$(get_host_uid php-sock):1" --gidmap "$PHP_SOCK_UID:$(get_host_gid php-sock):1" )
+
+    cmd buildah run "$CONTAINER" -- \
+        adduser -u "$PHP_SOCK_UID" -s "/sbin/nologin" -D -h "/" -H php-sock
+
+    cmd buildah run "$CONTAINER" -- \
+        addgroup apache2 php-sock
+fi
 
 # acme challenges
-cmd buildah run "$CONTAINER" -- \
-    adduser -u 65538 -s "/sbin/nologin" -D -h "/" -H acme
+if [ "$ENABLE_SSL" == "yes" ]; then
+    ACME_UID="$((NEXT_UID++))"
+    echo + "ACME_UID=$ACME_UID"
 
-cmd buildah run "$CONTAINER" -- \
-    addgroup apache2 acme
+    cmd buildah run "$CONTAINER" -- \
+        adduser -u "$ACME_UID" -s "/sbin/nologin" -D -h "/" -H acme
 
-PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_ACME_CHALLENGES_PATH,dst=/var/www/acme-challenges,ro=true" )
-cmd buildah config --volume "/var/www/acme-challenges" "$CONTAINER"
+    cmd buildah run "$CONTAINER" -- \
+        addgroup apache2 acme
 
-# ssl DH parameters
-if [ -f "$CONFIG_DIR/ssl/dhparams.pem" ]; then
-    echo + "cp $(quote "$CONFIG_DIR/ssl/dhparams.pem") …/etc/apache2/ssl/dhparams.pem" >&2
-    cp "$CONFIG_DIR/ssl/dhparams.pem" "$MOUNT/etc/apache2/ssl/dhparams.pem"
-else
-    echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q ssl" >&2
-    if buildah run "$CONTAINER" -- a2querymod -q "ssl"; then
+    PODMAN_CREATE_PARAMS+=( --uidmap "$ACME_UID:$(get_host_uid acme):1" --gidmap "$ACME_UID:$(get_host_gid acme):1" )
+    PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_ACME_CHALLENGES_PATH,dst=/var/www/acme-challenges,ro=true" )
+    cmd buildah config --volume "/var/www/acme-challenges" "$CONTAINER"
+fi
+
+# SSL DH parameters
+if [ "$ENABLE_SSL" == "yes" ]; then
+    if [ -f "$CONFIG_DIR/ssl/dhparams.pem" ]; then
+        echo + "cp $(quote "$CONFIG_DIR/ssl/dhparams.pem") …/etc/apache2/ssl/dhparams.pem" >&2
+        cp "$CONFIG_DIR/ssl/dhparams.pem" "$MOUNT/etc/apache2/ssl/dhparams.pem"
+    else
         echo + "openssl dhparam -out …/etc/apache2/ssl/dhparams.pem 2048" >&2
         openssl dhparam -out "$MOUNT/etc/apache2/ssl/dhparams.pem" 2048
     fi
@@ -279,13 +307,21 @@ SITES_DATA=(
 )
 
 # setup sites
-NEXT_SITE_UID=65539
 for SITE_DATA in "${SITES_DATA[@]}"; do
     echo "$SITE_DATA" | xargs printf '+ %s\n' >&2
     eval "$SITE_DATA"
 
+    if [ "$ENABLE_SSL" != "yes" ] && [ "$SITE_ENABLE_SSL" == "yes" ]; then
+        echo "ERROR: Site '$SITE' requests SSL support, but SSL was disabled globally" >&2
+        exit 1
+    fi
+    if [ "$ENABLE_PHP" != "yes" ] && [ "$SITE_ENABLE_PHP" == "yes" ]; then
+        echo "ERROR: Site '$SITE' requests PHP support, but PHP was disabled globally" >&2
+        exit 1
+    fi
+
     if ! buildah run "$CONTAINER" -- id -u "$SITE_OWNER" > /dev/null 2>&1; then
-        SITE_UID="$((NEXT_SITE_UID++))"
+        SITE_UID="$((NEXT_UID++))"
         echo + "SITE_UID=$SITE_UID"
 
         cmd buildah run "$CONTAINER" -- \
@@ -479,10 +515,6 @@ IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:${TAGS[0]}
 
 PODMAN_CREATE=(
     podman create -t --name "$CONTAINER_NAME" \
-        --subuidname "$HOST_USERNS" --uidmap "65536:$(get_host_uid apache2):1" \
-            --uidmap "65537:$(get_host_uid php-sock):1" --uidmap "65538:$(get_host_uid acme):1" \
-        --subgidname "$HOST_USERNS" --gidmap "65536:$(get_host_gid apache2):1" \
-            --gidmap "65537:$(get_host_gid php-sock):1" --gidmap "65538:$(get_host_gid acme):1" \
         "${PODMAN_CREATE_PARAMS[@]}" \
         "$IMAGE_ID"
 )
