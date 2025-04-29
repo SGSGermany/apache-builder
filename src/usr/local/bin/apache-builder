@@ -67,49 +67,6 @@ create_site_conf() {
         > "$MOUNT/etc/apache2/sites-available/$TARGET_PATH"
 }
 
-get_host_path() {
-    (
-        set +u
-
-        if [ "$SITE" == "default" ]; then
-            local HOST_PATH_VAR="HOST_DEFAULT_${1^^}_PATH"
-            [ -n "${!HOST_PATH_VAR}" ] || { echo "ERROR: Unable to get host path of $1 directory for default site" >&2; return 1; }
-            echo "${!HOST_PATH_VAR}"
-            return 0
-        fi
-
-        local HOST_PATH=
-        local ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
-
-        local HOST_PATHS_VAR="HOST_${1^^}_PATHS[@]"
-        HOST_PATH="$(printf '%s\n' "${!HOST_PATHS_VAR}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
-
-        if [ -z "$HOST_PATH" ]; then
-            local HOST_PATH_PATTERN_VAR="HOST_${1^^}_PATH_PATTERN"
-            HOST_PATH="$(envsubst SITE="$SITE" SITE_OWNER="$SITE_OWNER" <<< "${!HOST_PATH_PATTERN_VAR}")"
-        fi
-
-        [ -n "$HOST_PATH" ] || { echo "ERROR: Unable to get host path of $1 directory for site '$SITE'" >&2; return 1; }
-        echo "$HOST_PATH"
-    )
-}
-
-get_host_uid() {
-    local ESCAPED_USER="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
-    local RESULT="$(printf '%s\n' "${HOST_UID_MAP[@]}" | sed -ne "s/^$ESCAPED_USER   *\(.*\)$/\1/p")"
-
-    [ -n "$RESULT" ] || { echo "ERROR: Unable to get host user ID of '$1'" >&2; return 1; }
-    echo "$RESULT"
-}
-
-get_host_gid() {
-    local ESCAPED_GROUP="$(printf '%s\n' "$1" | sed -e 's/[]\/$*.^[]/\\&/g')"
-    local RESULT="$(printf '%s\n' "${HOST_GID_MAP[@]}" | sed -ne "s/^$ESCAPED_GROUP   *\(.*\)$/\1/p")"
-
-    [ -n "$RESULT" ] || { echo "ERROR: Unable to get host group ID of '$1'" >&2; return 1; }
-    echo "$RESULT"
-}
-
 # source container environment
 if [ ! -f "$BUILD_DIR/container.env" ]; then
     echo "ERROR: Unable to read default container environment '$BUILD_DIR/container.env': No such file or directory" >&2
@@ -150,8 +107,7 @@ else
 fi
 
 # build container
-PODMAN_CREATE_PARAMS=()
-NEXT_UID=65537
+NEXT_UID=65536
 
 echo + "CONTAINER=\"\$(buildah from $(quote "$BASE_IMAGE"))\"" >&2
 CONTAINER="$(buildah from "$BASE_IMAGE")"
@@ -168,10 +124,14 @@ cmd buildah config \
     --volume "/etc/apache2/ssl-" \
     "$CONTAINER"
 
-PODMAN_CREATE_PARAMS+=(
-    --subuidname "$HOST_USERNS" --uidmap "65536:$(get_host_uid apache2):1"
-    --subgidname "$HOST_USERNS" --gidmap "65536:$(get_host_gid apache2):1"
-)
+APACHE_UID="$((NEXT_UID++))"
+echo + "APACHE_UID=$APACHE_UID"
+
+echo + "PODMAN_ID_MAPS=( $(quote "apache2  $APACHE_UID") )" >&2
+PODMAN_ID_MAPS=( "apache2  $APACHE_UID" )
+
+echo + "PODMAN_MOUNTS=()" >&2
+PODMAN_MOUNTS=()
 
 # copy files
 echo + "rsync -v -rl --exclude .gitignore $(quote "$BUILD_DIR/src/") …/" >&2
@@ -226,7 +186,8 @@ if [ "$ENABLE_PHP" == "yes" ]; then
     PHP_SOCK_UID="$((NEXT_UID++))"
     echo + "PHP_SOCK_UID=$PHP_SOCK_UID"
 
-    PODMAN_CREATE_PARAMS+=( --uidmap "$PHP_SOCK_UID:$(get_host_uid php-sock):1" --gidmap "$PHP_SOCK_UID:$(get_host_gid php-sock):1" )
+    echo + "PODMAN_ID_MAPS+=( $(quote "php-sock  $PHP_SOCK_UID") )" >&2
+    PODMAN_ID_MAPS+=( "php-sock  $PHP_SOCK_UID" )
 
     cmd buildah run "$CONTAINER" -- \
         adduser -u "$PHP_SOCK_UID" -s "/sbin/nologin" -D -h "/" -H php-sock
@@ -246,8 +207,11 @@ if [ "$ENABLE_SSL" == "yes" ]; then
     cmd buildah run "$CONTAINER" -- \
         addgroup apache2 acme
 
-    PODMAN_CREATE_PARAMS+=( --uidmap "$ACME_UID:$(get_host_uid acme):1" --gidmap "$ACME_UID:$(get_host_gid acme):1" )
-    PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$HOST_ACME_CHALLENGES_PATH,dst=/var/www/acme-challenges,ro=true" )
+    echo + "PODMAN_ID_MAPS+=( $(quote "acme  $ACME_UID") )" >&2
+    PODMAN_ID_MAPS+=( "acme  $ACME_UID" )
+
+    echo + "PODMAN_MOUNTS+=( $(quote "default  acme  acme_challenges  /var/www/acme-challenges  ro=true") )" >&2
+    PODMAN_MOUNTS+=( "default  acme  acme_challenges  /var/www/acme-challenges  ro=true" )
     cmd buildah config --volume "/var/www/acme-challenges" "$CONTAINER"
 fi
 
@@ -330,8 +294,8 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         cmd buildah run "$CONTAINER" -- \
             adduser -u "$SITE_UID" -s /sbin/nologin -D -h "/usr/local/apache2" -H "$SITE_OWNER"
 
-        PODMAN_CREATE_PARAMS+=( --uidmap "$SITE_UID:$(get_host_uid "$SITE_OWNER"):1" )
-        PODMAN_CREATE_PARAMS+=( --gidmap "$SITE_UID:$(get_host_gid "$SITE_OWNER"):1" )
+        echo + "PODMAN_ID_MAPS+=( $(quote "$SITE_OWNER  $SITE_UID") )" >&2
+        PODMAN_ID_MAPS+=( "$SITE_OWNER  $SITE_UID" )
     fi
 
     # virtual host config
@@ -358,7 +322,8 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
             mkdir "$MOUNT/etc/apache2/ssl/$SITE"
         fi
 
-        PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "ssl"),dst=/etc/apache2/ssl/$SITE,ro=true" )
+        echo + "PODMAN_MOUNTS+=( $(quote "$SITE  $SITE_OWNER  ssl  /etc/apache2/ssl/$SITE  ro=true") )" >&2
+        PODMAN_MOUNTS+=( "$SITE  $SITE_OWNER  ssl  /etc/apache2/ssl/$SITE  ro=true" )
         cmd buildah config --volume "/etc/apache2/ssl/$SITE" "$CONTAINER"
     fi
 
@@ -387,7 +352,8 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                     mkdir "$MOUNT/run/php-fpm/$SITE"
                 fi
 
-                PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "php_fpm"),dst=/run/php-fpm/$SITE,ro=true" )
+                echo + "PODMAN_MOUNTS+=( $(quote "$SITE  $SITE_OWNER  php_fpm  /run/php-fpm/$SITE  ro=true") )" >&2
+                PODMAN_MOUNTS+=( "$SITE  $SITE_OWNER  php_fpm  /run/php-fpm/$SITE  ro=true" )
                 cmd buildah config --volume "/run/php-fpm/$SITE" "$CONTAINER"
 
                 echo + "create_site_conf conf.d/php-fpm.conf $(quote "$SITE.conf.d/php-fpm.conf")" >&2
@@ -400,7 +366,8 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 mkdir "$MOUNT/var/www/$SITE"
             fi
 
-            PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "htdocs"),dst=/var/www/$SITE,ro=true" )
+            echo + "PODMAN_MOUNTS+=( $(quote "$SITE  $SITE_OWNER  htdocs  /var/www/$SITE  ro=true") )" >&2
+            PODMAN_MOUNTS+=( "$SITE  $SITE_OWNER  htdocs  /var/www/$SITE  ro=true" )
             cmd buildah config --volume "/var/www/$SITE" "$CONTAINER"
             ;;
 
@@ -446,7 +413,8 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         mkdir "$MOUNT/var/log/apache2/$SITE"
     fi
 
-    PODMAN_CREATE_PARAMS+=( --mount "type=bind,src=$(get_host_path "logs"),dst=/var/log/apache2/$SITE" )
+    echo + "PODMAN_MOUNTS+=( $(quote "$SITE  $SITE_OWNER  logs  /var/log/apache2/$SITE  ro=false") )" >&2
+    PODMAN_MOUNTS+=( "$SITE  $SITE_OWNER  logs  /var/log/apache2/$SITE  ro=false" )
     cmd buildah config --volume "/var/log/apache2/$SITE" "$CONTAINER"
 
     # enable site
@@ -454,14 +422,6 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
         cmd buildah run "$CONTAINER" -- \
             a2ensite "$SITE"
     fi
-done
-
-# networking
-[ -z "$CONTAINER_NETWORK" ] || PODMAN_CREATE_PARAMS+=( --net "$CONTAINER_NETWORK" )
-[ -z "$CONTAINER_HOSTNAME" ] || PODMAN_CREATE_PARAMS+=( --hostname "$CONTAINER_HOSTNAME" )
-
-for CONTAINER_PUBLISH_PORT in "${CONTAINER_PUBLISH_PORTS[@]}"; do
-    PODMAN_CREATE_PARAMS+=( --publish "$CONTAINER_PUBLISH_PORT" )
 done
 
 # image annotations
@@ -525,12 +485,6 @@ done
 echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $(quote "localhost/$IMAGE:${TAGS[0]}"))\"" >&2
 IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:${TAGS[0]}")"
 
-PODMAN_CREATE=(
-    podman create -t --name "$CONTAINER_NAME" \
-        "${PODMAN_CREATE_PARAMS[@]}" \
-        "$IMAGE_ID"
-)
-
 JQ_TEMPLATE="$(cat <<'EOF'
 [
     {
@@ -550,7 +504,10 @@ JQ_TEMPLATE="$(cat <<'EOF'
         Os: .[]["Os"],
         Size: .[]["Size"],
         VirtualSize: .[]["VirtualSize"],
-        CreateCommand: $CREATE_COMMAND
+        RunMeta: {
+            IdMaps: $ID_MAPS,
+            Mounts: $MOUNTS
+        }
     }
 ]
 EOF
@@ -564,6 +521,7 @@ podman inspect "localhost/$IMAGE:${TAGS[0]}" \
         --arg NAME "$IMAGE" \
         --argjson TAGS "$(printf '%s\n' ${TAGS[@]} | jq -R . | jq -s .)" \
         --arg DIGEST "sha256:$IMAGE_DIGEST" \
-        --argjson CREATE_COMMAND "$(for ARG in "${PODMAN_CREATE[@]}"; do printf '%s' "$ARG" | jq -R -s .; done | jq -s .)" \
+        --argjson ID_MAPS "$(printf '%s\n' "${PODMAN_ID_MAPS[@]}" | jq -Rn '[inputs|split("  ")|{(.[0]): (.[1]|tonumber)}]|add')" \
+        --argjson MOUNTS "$(printf '%s\n' "${PODMAN_MOUNTS[@]}" | jq -Rn '[inputs|split("  ")|{site: .[0], owner: .[1], type: .[2], path: .[3], opts: (.[4]|split(","))}]')" \
         "$JQ_TEMPLATE" \
     | tee "$BUILD_DIR/archives/$IMAGE/$IMAGE_DIGEST/metadata.json"
