@@ -92,7 +92,7 @@ add_container_idmap() {
 
 # source container environment
 if [ ! -f "$BUILD_DIR/container.env" ]; then
-    echo "ERROR: Unable to read default container environment '$BUILD_DIR/container.env': No such file or directory" >&2
+    echo "Unable to read default container environment '$BUILD_DIR/container.env': No such file or directory" >&2
     exit 1
 fi
 
@@ -108,7 +108,7 @@ readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
 # source build config
 if [ ! -f "$BUILD_DIR/config.env" ]; then
-    echo "ERROR: Unable to read default Apache build config '$BUILD_DIR/config.env': No such file or directory" >&2
+    echo "Unable to read default Apache build config '$BUILD_DIR/config.env': No such file or directory" >&2
     exit 1
 fi
 
@@ -293,11 +293,11 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     eval "$SITE_DATA"
 
     if [ "$ENABLE_SSL" != "yes" ] && [ "$SITE_ENABLE_SSL" == "yes" ]; then
-        echo "ERROR: Site '$SITE' requests SSL support, but SSL was disabled globally" >&2
+        echo "Invalid site config: Site '$SITE' requests SSL support, but SSL was disabled globally" >&2
         exit 1
     fi
     if [ "$ENABLE_PHP" != "yes" ] && [ "$SITE_ENABLE_PHP" == "yes" ]; then
-        echo "ERROR: Site '$SITE' requests PHP support, but PHP was disabled globally" >&2
+        echo "Invalid site config: Site '$SITE' requests PHP support, but PHP was disabled globally" >&2
         exit 1
     fi
 
