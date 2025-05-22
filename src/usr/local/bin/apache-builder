@@ -74,7 +74,8 @@ CONTAINER_IDMAPS=()
 add_container_mount() {
     local JSON="$(jq -nc \
         --arg site "$2" --arg owner "$3" --arg type "$4" --arg path "$5" \
-        --argjson opts "$(printf '%s\n' "${@:6}" | jq -Rn '[ inputs | split("=") | {(.[0]): .[1]} ] | add')" \
+        --argjson opts "$([ $# -lt 6 ] && printf '%s\n' "{}" \
+            || printf '%s\n' "${@:6}" | jq -Rn '[ inputs | split("=") | {(.[0]): .[1]} ] | add')" \
         '$ARGS.named')"
 
     echo + "CONTAINER_MOUNTS+=( $(quote "$JSON") )" >&2
@@ -98,6 +99,8 @@ fi
 
 echo + "source /run/apache-builder/config.conf" >&2
 source /run/apache-builder/config.conf
+
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
 # get sites templates
 if [ -d "$CONFIG_DIR/sites-templates" ]; then
@@ -174,10 +177,10 @@ ENABLE_SSL="yes"
 ENABLE_PHP="yes"
 
 echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q ssl" >&2
-buildah run "$CONTAINER" -- a2querymod -q "ssl" || ENABLE_SSL="no"
+buildah run "$CONTAINER" -- a2querymod -q "ssl" 2> /dev/null || ENABLE_SSL="no"
 
 echo + "buildah run $(quote "$CONTAINER") -- a2querymod -q proxy proxy_fcgi" >&2
-buildah run "$CONTAINER" -- a2querymod -q "proxy" "proxy_fcgi" || ENABLE_PHP="no"
+buildah run "$CONTAINER" -- a2querymod -q "proxy" "proxy_fcgi" 2> /dev/null || ENABLE_PHP="no"
 
 # php sockets
 if [ "$ENABLE_PHP" == "yes" ]; then
