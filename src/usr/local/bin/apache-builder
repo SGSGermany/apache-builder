@@ -225,6 +225,8 @@ if [ "${#SITES[@]}" -gt 0 ]; then
     while IFS=$'\t' read -r SITE SITE_MODE SITE_OWNER SITE_ENABLE_SSL SITE_ENABLE_PHP; do
         ESCAPED_SITE="$(printf '%s\n' "$SITE" | sed -e 's/[]\/$*.^[]/\\&/g')"
 
+        [ "$SITE_MODE" == "htdocs" ] || [ "$SITE_MODE" == "redirect" ] || [ "$SITE_MODE" == "proxy" ] || SITE_MODE="none"
+
         SITE_WEBMASTER="webmaster@$(echo "$SITE" | rev | cut -d '.' -f 1-2 | rev)"
 
         SITE_ALIASES="$(printf '%s\n' "${SITES_ALIASES[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
@@ -232,6 +234,7 @@ if [ "${#SITES[@]}" -gt 0 ]; then
         [ "$SITE_ENABLE_SSL" == "yes" ] && SITE_HOME="https://$SITE" || SITE_HOME="http://$SITE"
 
         SITE_URL="$(printf '%s\n' "${SITES_URLS[@]}" | sed -ne "s/^$ESCAPED_SITE   *\(.*\)$/\1/p")"
+        [ "$SITE_MODE" != "redirect" ] && [ "$SITE_MODE" != "proxy" ] || [ -n "$SITE_URL" ] || SITE_MODE="none"
 
         SITES_DATA+=( "$(printf '%s=%q\n' \
             SITE "$SITE" \
@@ -248,8 +251,8 @@ if [ "${#SITES[@]}" -gt 0 ]; then
 fi
 
 # default site
-[ "$DEFAULT_SITE_MODE" != "proxy" ] || DEFAULT_SITE_MODE="redirect"
-[ "$DEFAULT_SITE_MODE" != "redirect" ] || [ -n "$DEFAULT_SITE_URL" ] || DEFAULT_SITE_MODE="htdocs"
+[ "$DEFAULT_SITE_MODE" == "htdocs" ] || [ "$DEFAULT_SITE_MODE" == "redirect" ] || DEFAULT_SITE_MODE="none"
+[ "$DEFAULT_SITE_MODE" != "redirect" ] || [ -n "$DEFAULT_SITE_URL" ] || DEFAULT_SITE_MODE="none"
 
 SITES_DATA=(
     "$(printf '%s=%q\n' \
