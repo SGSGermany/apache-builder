@@ -37,7 +37,7 @@ cmd() {
 
 envsubst() {
     local VARIABLES="$(for ARG in "$@"; do
-        awk 'match($0, /^([a-zA-Z_][a-zA-Z0-9_]*)=/, m) {print sprintf("${%s}", m[1])}' <<< "$ARG"
+        awk 'match($0, /^([a-zA-Z_][a-zA-Z0-9_]*)=/, m) { print sprintf("${%s}", m[1]) }' <<< "$ARG"
     done)"
 
     env -i -C "/" "$@" \
@@ -90,35 +90,14 @@ add_container_idmap() {
     CONTAINER_IDMAPS+=( "$JSON" )
 }
 
-# source container environment
-if [ ! -f "$BUILD_DIR/container.env" ]; then
-    echo "Unable to read default container environment '$BUILD_DIR/container.env': No such file or directory" >&2
+# source config
+if [ ! -f "/run/apache-builder/config.conf" ]; then
+    echo "Unable to read config file '/run/apache-builder/config.conf': No such file or directory" >&2
     exit 1
 fi
 
-echo + "source $(quote "$BUILD_DIR/container.env")" >&2
-source "$BUILD_DIR/container.env"
-
-if [ -f "$CONFIG_DIR/container.env" ]; then
-    echo + "source $(quote "$CONFIG_DIR/container.env")" >&2
-    source "$CONFIG_DIR/container.env"
-fi
-
-readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
-
-# source build config
-if [ ! -f "$BUILD_DIR/config.env" ]; then
-    echo "Unable to read default Apache build config '$BUILD_DIR/config.env': No such file or directory" >&2
-    exit 1
-fi
-
-echo + "source $(quote "$BUILD_DIR/config.env")" >&2
-source "$BUILD_DIR/config.env"
-
-if [ -f "$CONFIG_DIR/config.env" ]; then
-    echo + "source $(quote "$CONFIG_DIR/config.env")" >&2
-    source "$CONFIG_DIR/config.env"
-fi
+echo + "source /run/apache-builder/config.conf" >&2
+source /run/apache-builder/config.conf
 
 # get sites templates
 if [ -d "$CONFIG_DIR/sites-templates" ]; then

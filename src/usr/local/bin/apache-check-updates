@@ -63,17 +63,14 @@ done
 [ "$VERBOSE" -gt -1 ] || exec 2> /dev/null
 [ "$VERBOSE" -gt 0 ] || exec 1> /dev/null
 
-# load container config
-if [ -f "$CONFIG_DIR/container.env" ]; then
-    echo + "source $CONFIG_DIR/container.env"
-    source "$CONFIG_DIR/container.env"
-elif [ -f "$BUILD_DIR/container.env" ]; then
-    echo + "source $BUILD_DIR/container.env"
-    source "$BUILD_DIR/container.env"
-else
-    echo "Unable to read container environment: No such file or directory" >&2
+# source config
+if [ ! -f "/run/apache-builder/config.conf" ]; then
+    echo "Unable to read config file '/run/apache-builder/config.conf': No such file or directory" >&2
     exit 1
 fi
+
+echo + "source /run/apache-builder/config.conf" >&2
+source /run/apache-builder/config.conf
 
 readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
