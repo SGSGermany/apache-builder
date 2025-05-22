@@ -416,17 +416,18 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
 done
 
 # image annotations
-cmd buildah config \
-    --annotation org.opencontainers.image.title- \
-    --annotation org.opencontainers.image.description- \
-    --annotation org.opencontainers.image.version- \
-    --annotation org.opencontainers.image.url- \
-    --annotation org.opencontainers.image.source- \
-    --annotation org.opencontainers.image.revision- \
-    --annotation org.opencontainers.image.authors- \
-    --annotation org.opencontainers.image.vendor- \
-    --annotation org.opencontainers.image.licenses- \
-    "$CONTAINER"
+CLEANUP_ANNOTATIONS=()
+while IFS= read -r ANNOTATION; do
+    if [[ "$ANNOTATION" == "org.opencontainers.image."* ]]; then
+        CLEANUP_ANNOTATIONS+=( --annotation "$ANNOTATION"- )
+    elif [[ "$ANNOTATION" == "com.docker.official-images."* ]]; then
+        CLEANUP_ANNOTATIONS+=( --annotation "$ANNOTATION"- )
+    fi
+done < <(buildah inspect --format '{{ range $k, $_ := .ImageAnnotations }}{{ println $k }}{{ end }}' "$CONTAINER")
+
+if [ "${#CLEANUP_ANNOTATIONS[@]}" -gt 0 ]; then
+    cmd buildah config "${CLEANUP_ANNOTATIONS[@]}" "$CONTAINER"
+fi
 
 cmd buildah config \
     --annotation org.opencontainers.image.title="Apache HTTP server" \
