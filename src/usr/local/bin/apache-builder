@@ -138,6 +138,11 @@ add_container_idmap "apache2" "$APACHE_UID"
 echo + "rsync -v -rl --exclude .gitignore $(quote "$BUILD_DIR/src/") …/" >&2
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/" >&2
 
+if [ -d "$CONFIG_DIR/src" ]; then
+    echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/src/") …/" >&2
+    rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/src/" "$MOUNT/" >&2
+fi
+
 if [ -d "$CONFIG_DIR/mods" ]; then
     echo + "rsync -v -rl --exclude .gitignore $(quote "$CONFIG_DIR/mods/") …/etc/apache2/mods-available/" >&2
     rsync -v -rl --exclude '.gitignore' "$CONFIG_DIR/mods/" "$MOUNT/etc/apache2/mods-available/" >&2
@@ -417,6 +422,12 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
             a2ensite "$SITE"
     fi
 done
+
+# run local build script
+if [ -f "$CONFIG_DIR/build.sh" ]; then
+    echo + "source $(quote "$CONFIG_DIR/build.sh")" >&2
+    source "$CONFIG_DIR/build.sh"
+fi
 
 # image annotations
 CLEANUP_ANNOTATIONS=()
