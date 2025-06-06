@@ -197,7 +197,15 @@ action_exec() {
         PATH_TYPE="$(jq -r '.type' <<< "$MOUNT_JSON")"
         MOUNT_SOURCE="$(pathmap "$SITE" "$SITE_OWNER" "$PATH_TYPE")"
         MOUNT_DESTINATION="$(jq -r '.path' <<< "$MOUNT_JSON")"
-        MOUNT_OPTIONS="$(jq -c '.opts' <<< "$MOUNT_JSON")"
+
+        MOUNT_OPTIONS="{}"
+        case "$PATH_TYPE" in
+            "logs")            ;;
+            "ssl")             MOUNT_OPTIONS="$(jq -nc --arg "ro" "true" '$ARGS.named')" ;;
+            "htdocs")          MOUNT_OPTIONS="$(jq -nc --arg "ro" "true" '$ARGS.named')" ;;
+            "php_fpm")         MOUNT_OPTIONS="$(jq -nc --arg "ro" "true" '$ARGS.named')" ;;
+            "acme_challenges") MOUNT_OPTIONS="$(jq -nc --arg "ro" "true" '$ARGS.named')" ;;
+        esac
 
         [ -n "$MOUNT_SOURCE" ] || return 1
         [ -e "$MOUNT_SOURCE" ] || mkdir "$MOUNT_SOURCE"

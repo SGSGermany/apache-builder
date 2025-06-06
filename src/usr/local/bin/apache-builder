@@ -74,8 +74,6 @@ CONTAINER_IDMAPS=()
 add_container_mount() {
     local JSON="$(jq -nc \
         --arg site "$2" --arg owner "$3" --arg type "$4" --arg path "$5" \
-        --argjson opts "$([ $# -lt 6 ] && printf '%s\n' "{}" \
-            || printf '%s\n' "${@:6}" | jq -Rn '[ inputs | split("=") | {(.[0]): .[1]} ] | add')" \
         '$ARGS.named')"
 
     echo + "CONTAINER_MOUNTS+=( $(quote "$JSON") )" >&2
@@ -213,7 +211,7 @@ if [ "$ENABLE_SSL" == "yes" ]; then
         addgroup apache2 acme
 
     add_container_idmap "acme" "$ACME_UID"
-    add_container_mount "$CONTAINER" "default" "acme" "acme_challenges" "/var/www/acme-challenges" "ro=true"
+    add_container_mount "$CONTAINER" "default" "acme" "acme_challenges" "/var/www/acme-challenges"
 fi
 
 # SSL DH parameters
@@ -329,7 +327,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
             mkdir "$MOUNT/etc/apache2/ssl/$SITE"
         fi
 
-        add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "ssl" "/etc/apache2/ssl/$SITE" "ro=true"
+        add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "ssl" "/etc/apache2/ssl/$SITE"
     fi
 
     case "$SITE_MODE" in
@@ -357,7 +355,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                     mkdir "$MOUNT/run/php-fpm/$SITE"
                 fi
 
-                add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "php_fpm" "/run/php-fpm/$SITE" "ro=true"
+                add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "php_fpm" "/run/php-fpm/$SITE"
 
                 echo + "create_site_conf conf.d/php-fpm.conf $(quote "$SITE.conf.d/php-fpm.conf")" >&2
                 create_site_conf "conf.d/php-fpm.conf" "$SITE.conf.d/php-fpm.conf" || true
@@ -369,7 +367,7 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 mkdir "$MOUNT/var/www/$SITE"
             fi
 
-            add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "htdocs" "/var/www/$SITE" "ro=true"
+            add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "htdocs" "/var/www/$SITE"
             ;;
 
         "proxy")
