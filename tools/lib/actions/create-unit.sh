@@ -126,8 +126,8 @@ action_exec() {
     echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $(quote "localhost/$IMAGE:$TAG"))\"" >&2
     local IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:$TAG")"
 
-    echo + "DIGEST=\"\$(podman image inspect --format '{{.Digest}}' $(quote "localhost/$IMAGE:$TAG") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
-    local DIGEST="$(podman image inspect --format '{{.Digest}}' "localhost/$IMAGE:$TAG" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
+    echo + "DIGEST=\"\$(podman image inspect --format '{{.Digest}}' $(quote "$IMAGE_ID") | sed -ne 's/^sha256:\(.*\)$/\1/p')\"" >&2
+    local DIGEST="$(podman image inspect --format '{{.Digest}}' "$IMAGE_ID" | sed -ne 's/^sha256:\(.*\)$/\1/p')"
 
     # check OCI archive
     check_oci_archive
