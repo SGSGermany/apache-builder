@@ -23,7 +23,18 @@ HOST_PHP_FPM_PATH_PATTERN="${HOST_PHP_FPM_PATH_PATTERN:-/run/php-fpm/\$\{SITE\}}
 HOST_ACME_CHALLENGES_PATH="${HOST_ACME_CHALLENGES_PATH:-/var/local/acme/challenges}"
 
 [ -v HOST_UID_MAP ] || HOST_UID_MAP=()
+if ! grep -q '^apache2  ' < <(printf '%s\n' "${HOST_UID_MAP[@]}"); then
+    if ! id -u -- "apache2" 2> /dev/null; then
+        HOST_UID_MAP=( "apache2  $(id -u -- "$CONTAINER_USERNS")" "${HOST_UID_MAP[@]}" )
+    fi
+fi
+
 [ -v HOST_GID_MAP ] || HOST_GID_MAP=()
+if ! grep -q '^apache2  ' < <(printf '%s\n' "${HOST_GID_MAP[@]}"); then
+    if ! id -g -- "apache2" 2> /dev/null; then
+        HOST_GID_MAP=( "apache2  $(id -g -- "$CONTAINER_USERNS")" "${HOST_GID_MAP[@]}" )
+    fi
+fi
 
 if [ ! -v APACHE_MODULES ]; then
     APACHE_MODULES=(
