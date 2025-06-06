@@ -10,7 +10,11 @@
 # License-Filename: LICENSE
 
 action_info() {
+    local TAG="${TAGS%% *}"
+
     echo + "IMAGE=${IMAGE@Q}" >&2
+    echo + "TAG=${TAG@Q}" >&2
+
     echo + "ARCHIVES_PATH=${ARCHIVES_PATH@Q}" >&2
 }
 

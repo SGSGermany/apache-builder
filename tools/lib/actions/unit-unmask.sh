@@ -10,14 +10,11 @@
 # License-Filename: LICENSE
 
 action_info() {
-    echo + "IMAGE=${IMAGE@Q}" >&2
     echo + "UNIT=${UNIT@Q}" >&2
 }
 
 action_exec() {
-    check_unit "$UNIT"
-    check_image "$IMAGE"
+    check_container_unit "$UNIT"
 
-    echo + "systemctl start $(quote "$UNIT")" >&2
-    __systemctl start "$UNIT"
+    __systemctl unmask "$UNIT.service"
 }

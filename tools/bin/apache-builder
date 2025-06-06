@@ -14,10 +14,18 @@ set -eu -o pipefail
 export LC_ALL=C.UTF-8
 shopt -s nullglob
 
-APP_NAME="$(basename "${BASH_SOURCE[0]}")"
-LIB_DIR="/usr/local/lib/apache-builder"
-CONFIG_DIR="/etc/apache-builder"
+[ -v UID ] || declare -rx UID="$(id -u)"
+[ -v USER ] || declare -rx USER="$(id -un)"
+[ -v HOME ] || declare -rx HOME="$(bash -c "cd ~$(printf '%q' "$USER") && pwd")"
+[ -v GID ] || declare -rx GID="$(id -g)"
+[ -v GROUP ] || declare -rx GROUP="$(id -gn)"
 
+if [ "$UID" != "0" ]; then
+    [ -n "${XDG_DATA_HOME:-}" ] || export XDG_DATA_HOME="$HOME/.local/share"
+    [ -n "${XDG_CONFIG_HOME:-}" ] || export XDG_CONFIG_HOME="$HOME/.config"
+fi
+
+# helper functions
 print_usage() {
     echo "Usage:"
     echo "  $APP_NAME [--config CONFIG] ACTION"
@@ -30,11 +38,14 @@ print_help() {
     echo "  build          Builds the image."
     echo "  import         Imports the built image into the Podman storage."
     echo "  exists         Checks whether the image is in the Podman storage."
-    echo "  check-updates  Checks whether an image update is available."
-    echo "  update         Runs 'build', 'import', and 'create-unit'."
-    echo "  auto-update    Checks for updates and runs 'clean' and 'update', if necessary."
     echo "  clean          Deletes unused images."
     echo "  create-unit    Creates a Systemd service unit for the container."
+    echo "  subids         Updates '/etc/subuid' and '/etc/subgid' as needed."
+    echo "  check-updates  Checks whether an image update is available."
+    echo "  update         Runs 'build', 'import', 'subids' (if enabled),"
+    echo "                 and 'create-unit'."
+    echo "  auto-update    Checks for updates, runs 'clean' and 'update' (if necessary),"
+    echo "                 as well as 'unit-enable' and 'unit-start' (if enabled)."
     echo "  unit-start     Starts the Systemd service."
     echo "  unit-stop      Stops the Systemd service."
     echo "  unit-kill      Sends SIGKILL signal to the Systemd service."
@@ -42,11 +53,109 @@ print_help() {
     echo "  unit-status    Prints status info about the Systemd service."
     echo "  unit-enable    Enables the Systemd service."
     echo "  unit-disable   Disables the Systemd service."
+    echo "  unit-mask      Masks the Systemd service and prevents changes."
+    echo "  unit-unmask    Unmasks the Systemd service and allows changes."
     echo "  help           Prints this usage info and exits."
 }
 
+check_path() {
+    local MESSAGE="$1"
+    local CHECK="$2"
+    shift 2
+
+    while [ $# -gt 0 ]; do
+        if [ "$1" == "-e" ] && [ ! -e "$CHECK" ]; then
+            [ -h "$CHECK" ] && { echo "$MESSAGE ${CHECK@Q}: Broken symbolic link" >&2; return 1; } \
+                || { echo "$MESSAGE ${CHECK@Q}: No such file or directory" >&2; return 1; }
+        fi
+        if [ "$1" == "-h" ] && [ ! -h "$CHECK" ]; then
+            [ -e "$CHECK" ] && { echo "$MESSAGE ${CHECK@Q}: Not a symbolic link" >&2; return 1; } \
+                || { echo "$MESSAGE ${CHECK@Q}: No such file or directory" >&2; return 1; }
+        fi
+
+        [ "$1" != "-f" ] || [ -f "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Not a file" >&2; return 1; }
+        [ "$1" != "-d" ] || [ -d "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Not a directory" >&2; return 1; }
+        [ "$1" != "-r" ] || [ -r "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Permission denied" >&2; return 1; }
+        [ "$1" != "-w" ] || [ -w "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Permission denied" >&2; return 1; }
+        [ "$1" != "-x" ] || [ -x "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Permission denied" >&2; return 1; }
+        [ "$1" != "-n" ] || [ ! -e "$CHECK" ] || { echo "$MESSAGE ${CHECK@Q}: Conflicting file or directory exists" >&2; return 1; }
+
+        shift
+    done
+}
+
+readlink_last() {
+    local FILE="$1"
+    [ "${FILE:0:1}" == "/" ] || FILE="$PWD/$FILE"
+
+    while [ -h "$FILE" ]; do
+        local TARGET="$(readlink "$FILE")"
+        [ "${TARGET:0:1}" != "/" ] && FILE="$(dirname "$FILE")/$TARGET" || FILE="$TARGET"
+    done
+
+    FILE="$(sed -e 's#/\./#/#g' -e 's#///*#/#g' <<< "$FILE")"
+    while [[ "$FILE" == */../* ]]; do
+        FILE="$(sed -e 's#\(/[^/][^/]*\|^\)/\.\./#/#' <<< "$FILE")"
+    done
+
+    echo "$FILE"
+}
+
+# check script dependencies
+[ -x "$(which jq)" ] || { echo "Missing script dependency: jq" >&2; exit 1; }
+[ -x "$(which cmp)" ] || { echo "Missing script dependency: cmp" >&2; exit 1; }
+[ -x "$(which sed)" ] || { echo "Missing script dependency: sed" >&2; exit 1; }
+[ -x "$(which awk)" ] || { echo "Missing script dependency: awk" >&2; exit 1; }
+[ -x "$(which gawk)" ] || { echo "Missing script dependency: gawk" >&2; exit 1; }
+[ -x "$(which getent)" ] || { echo "Missing script dependency: getent" >&2; exit 1; }
+[ -x "$(which envsubst)" ] || { echo "Missing script dependency: envsubst" >&2; exit 1; }
+[ -x "$(which bwrap)" ] || { echo "Missing script dependency: bwrap" >&2; exit 1; }
+[ -x "$(which podman)" ] || { echo "Missing script dependency: podman" >&2; exit 1; }
+[ -x "$(which systemctl)" ] || { echo "Missing script dependency: systemctl" >&2; exit 1; }
+
+# script setup
+APP_NAME="$(basename "${BASH_SOURCE[0]}")"
+APP_BINARY="$(readlink_last "${BASH_SOURCE[0]}")"
+APP_BASE_DIR="$(dirname "$(dirname "$APP_BINARY")")"
+
+if [ "$APP_BASE_DIR" == "$HOME/.local/opt/apache-builder" ]; then
+    LIB_DIR="$APP_BASE_DIR/lib"
+    DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/apache-builder"
+    CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/apache-builder"
+else
+    if [ "$APP_BASE_DIR" == "/usr" ]; then
+        LIB_DIR="/usr/lib/apache-builder"
+        DATA_DIR="/var/lib/apache-builder"
+        CONFIG_DIR="/etc/apache-builder"
+    elif [ "$APP_BASE_DIR" == "/usr/local" ]; then
+        LIB_DIR="/usr/local/lib/apache-builder"
+        DATA_DIR="/var/local/apache-builder"
+        CONFIG_DIR="/etc/apache-builder"
+    elif [ "$APP_BASE_DIR" == "/opt/apache-builder" ]; then
+        LIB_DIR="/opt/apache-builder/lib"
+        DATA_DIR="/var/opt/apache-builder"
+        CONFIG_DIR="/etc/opt/apache-builder"
+    else
+        echo "Invalid script setup: Invalid app base dir: $APP_BASE_DIR" >&2
+        exit 1
+    fi
+
+    if [ "$UID" != "0" ]; then
+        DATA_DIR="$XDG_DATA_HOME/apache-builder"
+        CONFIG_DIR="$XDG_CONFIG_HOME/apache-builder"
+    fi
+fi
+
+check_path "Invalid script setup: Invalid lib dir" "$LIB_DIR" -e -d
+
+[ -e "$CONFIG_DIR" ] || [ -h "$CONFIG_DIR" ] || mkdir "$CONFIG_DIR"
+check_path "Invalid script setup: Invalid config dir" "$CONFIG_DIR" -e -d
+
+[ -e "$DATA_DIR" ] || [ -h "$DATA_DIR" ] || mkdir "$DATA_DIR"
+check_path "Invalid script setup: Invalid data dir" "$DATA_DIR" -e -d
+
 # read parameters
-CONFIG_FILE="config.env"
+CONFIG=""
 ACTION=""
 
 while [ $# -gt 0 ]; do
@@ -57,19 +166,17 @@ while [ $# -gt 0 ]; do
         if [ -z "${2:-}" ]; then
             echo "Missing required argument 'CONFIG' for option '--config'" >&2
             exit 1
+        elif [ "$2" == "config" ] || [ "$2" == "apache" ]; then
+            echo "Invalid argument 'CONFIG' for option '--config': $2" >&2
+            exit 1
         fi
 
-        CONFIG_FILE="$2"
+        CONFIG="$2"
         shift 2
     elif [ "${1:0:1}" == "-" ]; then
         echo "Unknown option: $1" >&2
         exit 1
     elif [ -z "$ACTION" ]; then
-        if [ "$1" == "help" ]; then
-            print_help
-            exit
-        fi
-
         ACTION="$1"
         shift
     else
@@ -78,79 +185,84 @@ while [ $# -gt 0 ]; do
     fi
 done
 
+# check parameters
 if [ -z "$ACTION" ]; then
-    echo "Missing required argument 'ACTION'" >&2
-    echo >&2
     print_usage >&2
+    exit 1
+elif [ "$ACTION" == "help" ]; then
+    print_help
+    exit
+elif [ ! -e "$LIB_DIR/actions/$ACTION.sh" ]; then
+    echo "Unknown action: $ACTION" >&2
     exit 1
 fi
 
 # source helper functions
-source "$LIB_DIR/helper.sh.inc"
+source "$LIB_DIR/helper.sh"
+source "$LIB_DIR/helper-config.sh"
 
-# source config file
-if [ "${CONFIG_FILE:0:1}" != "/" ]; then
-    CONFIG_FILE="$CONFIG_DIR/$CONFIG_FILE"
+# source main config file
+CONFIG_FILE="$CONFIG_DIR/${CONFIG:-config}.conf"
+if [ -e "$CONFIG_FILE" ]; then
+    check_path "Invalid config file" "$CONFIG_FILE" -f -r
+
+    source_config "$USER" "$CONFIG_FILE" \
+        --env "LIB_DIR DATA_DIR CONFIG_DIR CONFIG" \
+        "${MAIN_CONFIG_VARS[@]}"
 fi
 
-if [ ! -e "$CONFIG_FILE" ]; then
-    echo "Invalid config file '$CONFIG_FILE': No such file or directory" >&2
-    exit 1
-elif [ ! -f "$CONFIG_FILE" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Not a file" >&2
-    exit 1
-elif [ ! -r "$CONFIG_FILE" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Permission denied" >&2
-    exit 1
+source "$LIB_DIR/default.conf.sh"
+
+# source image config file
+IMAGE_CONFIG="$BUILDER_CONFIG/image.conf"
+if [ -e "$IMAGE_CONFIG" ]; then
+    check_path "Invalid image config file" "$IMAGE_CONFIG" -f -r
+
+    source_config "$BUILDER_USER" "$IMAGE_CONFIG" \
+        --env "LIB_DIR DATA_DIR CONFIG_DIR CONFIG" \
+        --env "${MAIN_CONFIG_VARS[*]}" \
+        "${IMAGE_CONFIG_VARS[@]}"
 fi
 
-source "$CONFIG_FILE"
+source "$LIB_DIR/default-image.conf.sh"
 
-if [ -z "${UNIT_TEMPLATE:-}" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'UNIT_TEMPLATE'" >&2
-    exit 1
-elif [ -z "${BUILDER_IMAGE:-}" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'BUILDER_IMAGE'" >&2
-    exit 1
-elif [ -z "${CONFIG_PATH:-}" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'CONFIG_PATH'" >&2
-    exit 1
-elif [ -z "${ARCHIVES_PATH:-}" ]; then
-    echo "Invalid config file '$CONFIG_FILE': Missing required config variable 'ARCHIVES_PATH'" >&2
-    exit 1
+# source container config file
+CONTAINER_CONFIG="$BUILDER_CONFIG/container.conf"
+if [ -e "$CONTAINER_CONFIG" ]; then
+    check_path "Invalid container config file" "$CONTAINER_CONFIG" -f -r
+
+    source_config "$BUILDER_USER" "$CONTAINER_CONFIG" \
+        --env "LIB_DIR DATA_DIR CONFIG_DIR CONFIG" \
+        --env "${MAIN_CONFIG_VARS[*]}" \
+        --env "${IMAGE_CONFIG_VARS[*]}" \
+        "${CONTAINER_CONFIG_VARS[@]}"
 fi
 
-# import 'IMAGE' and 'TAGS' config from container.env
-source <(
-    . "$CONFIG_PATH/container.env";
-    printf '%s=%q\n' IMAGE "$IMAGE";
-    printf '%s=%q\n' TAGS "$TAGS";
-)
+source "$LIB_DIR/default-container.conf.sh"
 
-if [ -z "${IMAGE:-}" ]; then
-    echo "Invalid container config file '$CONFIG_PATH/container.env': Missing required config variable 'IMAGE'" >&2
-    exit 1
-elif [ -z "${TAGS:-}" ]; then
-    echo "Invalid container config file '$CONFIG_PATH/container.env': Missing required config variable 'TAGS'" >&2
-    exit 1
+# source apache config file
+APACHE_CONFIG="$BUILDER_CONFIG/apache.conf"
+if [ -e "$APACHE_CONFIG" ]; then
+    check_path "Invalid apache config file" "$APACHE_CONFIG" -f -r
+
+    source_config "$BUILDER_USER" "$APACHE_CONFIG" \
+        --env "LIB_DIR DATA_DIR CONFIG_DIR CONFIG" \
+        --env "${MAIN_CONFIG_VARS[*]}" \
+        --env "${IMAGE_CONFIG_VARS[*]}" \
+        --env "${CONTAINER_CONFIG_VARS[*]}" \
+        "${APACHE_CONFIG_VARS[@]}"
 fi
 
-# set default config values
-[ -n "${CONTAINER:-}" ] || CONTAINER="$IMAGE"
-[ -n "${UNIT:-}" ] || UNIT="container-$CONTAINER.service"
-[ -n "${BUILDER_USER:-}" ] || BUILDER_USER="$(id -un)"
-[ -n "${BUILDER_CONTAINER:-}" ] || BUILDER_CONTAINER="$(basename "$BUILDER_IMAGE" | cut -d ':' -f 1 | cut -d '@' -f 1)"
+source "$LIB_DIR/default-apache.conf.sh"
+
+# finalize config
+[ -n "$UNIT" ] || UNIT="$CONTAINER"
+[ -n "$BUILDER_CONTAINER" ] || BUILDER_CONTAINER="$IMAGE-builder"
 
 # call action
-if [ ! -e "$LIB_DIR/$ACTION.sh" ]; then
-    echo "Invalid action '$ACTION': Action not found" >&2
-    exit 1
-elif [ ! -f "$LIB_DIR/$ACTION.sh" ] || [ ! -r "$LIB_DIR/$ACTION.sh" ]; then
-    echo "Invalid action '$ACTION': Action is invalid" >&2
-    exit 1
-fi
+check_path "Invalid action script" "$LIB_DIR/actions/$ACTION.sh" -f -r
 
-source "$LIB_DIR/$ACTION.sh"
+source "$LIB_DIR/actions/$ACTION.sh"
 
 action_info
 action_exec "$@"

@@ -10,14 +10,18 @@
 # License-Filename: LICENSE
 
 action_info() {
+    echo + "BASE_IMAGE=${BASE_IMAGE@Q}" >&2
     echo + "IMAGE=${IMAGE@Q}" >&2
-    echo + "UNIT=${UNIT@Q}" >&2
+    echo + "TAGS=${TAGS@Q}" >&2
+
+    echo + "BUILDER_USER=${BUILDER_USER@Q}" >&2
+    echo + "BUILDER_IMAGE=${BUILDER_IMAGE@Q}" >&2
+    echo + "BUILDER_CONTAINER=${BUILDER_CONTAINER@Q}" >&2
+    echo + "BUILDER_CONFIG=${BUILDER_CONFIG@Q}" >&2
+    echo + "ARCHIVES_PATH=${ARCHIVES_PATH@Q}" >&2
 }
 
 action_exec() {
-    check_unit "$UNIT"
-    check_image "$IMAGE"
-
-    echo + "systemctl disable $(quote "$UNIT")" >&2
-    __systemctl disable "$UNIT"
+    check_builder
+    run_builder
 }
