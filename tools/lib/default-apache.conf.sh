@@ -38,7 +38,6 @@ fi
 
 if [ ! -v APACHE_MODULES ]; then
     APACHE_MODULES=(
-        # base modules
         "mpm_event"
         "authn_file"
         "authn_core"
@@ -58,18 +57,11 @@ if [ ! -v APACHE_MODULES ]; then
         "autoindex"
         "dir"
         "alias"
-
-        # additional base modules
-        "ssl"
-        "socache_shmcb"
-        "proxy"
-        "proxy_fcgi"
     )
 fi
 
 if [ ! -v APACHE_CONFIGS ]; then
     APACHE_CONFIGS=(
-        # base configs
         "charset"
         "connection"
         "errors"
@@ -79,8 +71,5 @@ if [ ! -v APACHE_CONFIGS ]; then
         "ssl"
         "ssl-ocsp-stapling"
         "ssl-security"
-
-        # additional base configs
-        "acme-challenge"
     )
 fi
