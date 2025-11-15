@@ -316,9 +316,14 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     fi
 
     SKIP_CREATE_CONFIG="no"
-    echo + "create_site_conf $SITE_TEMPLATE $(quote "$SITE.conf")" >&2
-    create_site_conf "$SITE_TEMPLATE" "$SITE.conf" \
-        || { SKIP_CREATE_CONFIG="yes"; true; }
+    [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf" ] \
+        || SKIP_CREATE_CONFIG="yes"
+
+    if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
+        echo + "create_site_conf $SITE_TEMPLATE $(quote "$SITE.conf")" >&2
+        create_site_conf "$SITE_TEMPLATE" "$SITE.conf" \
+            || { SKIP_CREATE_CONFIG="yes"; true; }
+    fi
 
     if [ "$SITE_ENABLE_SSL" == "yes" ]; then
         # ssl cert/key directory
@@ -333,6 +338,9 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
     case "$SITE_MODE" in
         "htdocs")
             # htdocs site config
+            [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/htdocs.conf" ] \
+                || SKIP_CREATE_CONFIG="yes"
+
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
                 echo + "create_site_conf conf.d/htdocs.conf $(quote "$SITE.conf.d/htdocs.conf")" >&2
                 create_site_conf "conf.d/htdocs.conf" "$SITE.conf.d/htdocs.conf" \
@@ -343,8 +351,10 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/htdocs.conf.d/"*".conf"; do
                     SITE_ADDITIONAL_CONF="htdocs.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
 
-                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
-                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    if [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/$SITE_ADDITIONAL_CONF" ]; then
+                        echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
+                        create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    fi
                 done
             fi
 
@@ -357,8 +367,10 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
 
                 add_container_mount "$CONTAINER" "$SITE" "$SITE_OWNER" "php_fpm" "/run/php-fpm/$SITE"
 
-                echo + "create_site_conf conf.d/php-fpm.conf $(quote "$SITE.conf.d/php-fpm.conf")" >&2
-                create_site_conf "conf.d/php-fpm.conf" "$SITE.conf.d/php-fpm.conf" || true
+                if [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/php-fpm.conf" ]; then
+                    echo + "create_site_conf conf.d/php-fpm.conf $(quote "$SITE.conf.d/php-fpm.conf")" >&2
+                    create_site_conf "conf.d/php-fpm.conf" "$SITE.conf.d/php-fpm.conf" || true
+                fi
             fi
 
             # htdocs document root
@@ -372,6 +384,9 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
 
         "proxy")
             # proxy site config
+            [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/proxy.conf" ] \
+                || SKIP_CREATE_CONFIG="yes"
+
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
                 echo + "create_site_conf conf.d/proxy.conf $(quote "$SITE.conf.d/proxy.conf")" >&2
                 create_site_conf "conf.d/proxy.conf" "$SITE.conf.d/proxy.conf" \
@@ -382,14 +397,19 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/proxy.conf.d/"*".conf"; do
                     SITE_ADDITIONAL_CONF="proxy.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
 
-                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
-                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    if [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/$SITE_ADDITIONAL_CONF" ]; then
+                        echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
+                        create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    fi
                 done
             fi
             ;;
 
         "redirect")
             # redirect site config
+            [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/redirect.conf" ] \
+                || SKIP_CREATE_CONFIG="yes"
+
             if [ "$SKIP_CREATE_CONFIG" == "no" ]; then
                 echo + "create_site_conf conf.d/redirect.conf $(quote "$SITE.conf.d/redirect.conf")" >&2
                 create_site_conf "conf.d/redirect.conf" "$SITE.conf.d/redirect.conf" || true
@@ -399,8 +419,10 @@ for SITE_DATA in "${SITES_DATA[@]}"; do
                 for SITE_ADDITIONAL_CONF in "$SITES_TEMPLATES/conf.d/redirect.conf.d/"*".conf"; do
                     SITE_ADDITIONAL_CONF="redirect.conf.d/$(basename "$SITE_ADDITIONAL_CONF" .conf).conf"
 
-                    echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
-                    create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    if [ ! -e "$MOUNT/etc/apache2/sites-available/$SITE.conf.d/$SITE_ADDITIONAL_CONF" ]; then
+                        echo + "create_site_conf $(quote "conf.d/$SITE_ADDITIONAL_CONF") $(quote "$SITE.conf.d/$SITE_ADDITIONAL_CONF")" >&2
+                        create_site_conf "conf.d/$SITE_ADDITIONAL_CONF" "$SITE.conf.d/$SITE_ADDITIONAL_CONF" || true
+                    fi
                 done
             fi
             ;;
